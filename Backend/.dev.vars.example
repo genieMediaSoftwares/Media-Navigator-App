@@ -1,0 +1,7 @@
+# Copy to .dev.vars for local development. Never commit .dev.vars.
+GEMINI_API_KEY=
+META_APP_ID=
+META_APP_SECRET=
+META_REDIRECT_URI=http://localhost:8787/api/accounts/callback/instagram
+ENCRYPTION_KEY=
+META_API_VERSION=v21.0
