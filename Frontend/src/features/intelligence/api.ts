@@ -11,7 +11,7 @@ import {
   PostDetail,
 } from '@/types/api';
 
-// Intelligence data comes only from the Worker. AI text is generated server-side (Worker → Gemini);
+// Intelligence data comes only from the server. AI text is generated server-side (server → Gemini);
 // the app never calls Gemini and never holds a Meta token.
 
 function query(params: Record<string, string | number | null | undefined>): string {

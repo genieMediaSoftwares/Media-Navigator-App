@@ -62,26 +62,24 @@ export function AccountHeader({ account, accounts, syncedPosts, onSelect }: Acco
 
       <BottomSheet visible={open} onClose={() => setOpen(false)} title="Accounts">
         {accounts.map((option) => {
-          const supported = option.platform === 'instagram';
           const selected = option.id === account.id;
           const optionPlatform = platformOption(option.platform);
           return (
             <Pressable
               key={option.id}
-              disabled={!supported}
               onPress={() => {
                 setOpen(false);
                 if (!selected) onSelect(option.id);
               }}
               accessibilityRole="button"
-              accessibilityState={{ selected, disabled: !supported }}
-              accessibilityLabel={`${optionPlatform.name} @${option.handle}${supported ? '' : ', intelligence not available yet'}`}
+              accessibilityState={{ selected }}
+              accessibilityLabel={`${optionPlatform.name} @${option.handle}`}
               className="min-h-16 flex-row items-center active:bg-neutral-50"
             >
               <AccountAvatar account={option} size={40} />
               <View className="ml-md flex-1">
-                <Text className={`text-body ${supported ? 'text-navy' : 'text-neutral-500'}`}>@{option.handle}</Text>
-                <Text className="text-caption text-neutral-500">{supported ? optionPlatform.name : `${optionPlatform.name} · Intelligence not available yet`}</Text>
+                <Text className="text-body text-navy">@{option.handle}</Text>
+                <Text className="text-caption text-neutral-500">{optionPlatform.name}</Text>
               </View>
               {selected ? <Ionicons name="checkmark-circle" size={22} color={colors.primary} /> : null}
             </Pressable>

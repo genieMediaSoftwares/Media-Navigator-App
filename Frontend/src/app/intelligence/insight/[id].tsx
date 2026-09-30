@@ -10,6 +10,7 @@ import { Gradient } from '@/components/visual/Gradient';
 import { FadeIn } from '@/components/visual/Motion';
 import { Overline } from '@/components/visual/Typography';
 import { colors } from '@/constants/colors';
+import { platformOption } from '@/features/accounts/platforms';
 import { fetchAiInsights } from '@/features/intelligence/api';
 import { EvidenceBlock, SupportingDataList } from '@/features/intelligence/components/Evidence';
 import { describeIntelligenceError, INSIGHT_LABELS } from '@/features/intelligence/labels';
@@ -20,6 +21,7 @@ import { AiInsight } from '@/types/api';
 
 function InsightDetail({ insight, generatedAt, accountId }: { insight: AiInsight; generatedAt: string; accountId: string }) {
   const label = INSIGHT_LABELS[insight.type];
+  const platformName = platformOption(intelligenceSession.overview(accountId)?.account.platform ?? 'instagram').name;
   return (
     <ScrollView className="flex-1 bg-white" contentContainerClassName="pb-3xl">
       <Gradient name="aiSoft" style={{ paddingHorizontal: 24, paddingTop: 12, paddingBottom: 28 }}>
@@ -35,7 +37,7 @@ function InsightDetail({ insight, generatedAt, accountId }: { insight: AiInsight
           <Text className="mt-lg text-display text-navy" accessibilityRole="header">
             {insight.title}
           </Text>
-          <Text className="mt-sm text-caption text-neutral-500">Generated {formatRelativeTime(generatedAt).toLowerCase()} from your synced Instagram data</Text>
+          <Text className="mt-sm text-caption text-neutral-500">Generated {formatRelativeTime(generatedAt).toLowerCase()} from your synced {platformName} data</Text>
         </FadeIn>
       </Gradient>
 
@@ -48,7 +50,7 @@ function InsightDetail({ insight, generatedAt, accountId }: { insight: AiInsight
 
         <FadeIn index={2}>
           <EvidenceBlock title="Supporting data" kind="observed">
-            <Text className="mb-xs text-caption text-neutral-500">These numbers come directly from your synced Instagram data, not from the AI.</Text>
+            <Text className="mb-xs text-caption text-neutral-500">These numbers come directly from your synced {platformName} data, not from the AI.</Text>
             <SupportingDataList data={insight.supportingData} accountId={accountId} />
           </EvidenceBlock>
         </FadeIn>
@@ -84,7 +86,7 @@ export default function InsightDetailScreen() {
   return <InsightLoader id={id} accountId={accountId} />;
 }
 
-/** Fallback when the screen is opened without the home screen's data (served from the Worker's cache). */
+/** Fallback when the screen is opened without the home screen's data (served from the server's cache). */
 function InsightLoader({ id, accountId }: { id: string; accountId: string }) {
   const fetcher = useCallback(() => fetchAiInsights(accountId), [accountId]);
   const { state, reload } = useApiResource(fetcher);

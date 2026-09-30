@@ -6,7 +6,7 @@ import { colors } from '@/constants/colors';
 import { MediaNavigatorLogo } from './brand/MediaNavigatorLogo';
 import { ErrorState } from './ErrorState';
 
-/** Branded splash shown while the stored session is checked with the Worker at startup. */
+/** Branded splash shown while the stored session is checked with the server at startup. */
 export function SplashView() {
   return (
     <View className="flex-1 items-center justify-center bg-white px-xl">

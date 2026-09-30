@@ -9,15 +9,13 @@ import { Divider } from '@/components/ui/Divider';
 import { Notice } from '@/components/ui/Notice';
 import { colors } from '@/constants/colors';
 import { disconnectAccount, fetchConnectedAccounts } from '@/features/accounts/api';
-import { PLATFORMS } from '@/features/accounts/platforms';
-import { useConnectAccount } from '@/features/accounts/useConnectAccount';
+import { accountHref, PLATFORMS } from '@/features/accounts/platforms';
 import { useApiResource } from '@/hooks/useApiResource';
 import { ConnectedAccount, SocialPlatform } from '@/types/api';
 
 export default function ConnectedAccountsScreen() {
   const router = useRouter();
   const { state, refreshing, reload, refresh } = useApiResource(fetchConnectedAccounts);
-  const { connectToken, connecting } = useConnectAccount();
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
 
   // Automatically refresh accounts when returning to this screen
@@ -58,13 +56,8 @@ export default function ConnectedAccountsScreen() {
     [reload],
   );
 
-  const handleAction = (platformId: SocialPlatform, conn: ConnectedAccount | null | undefined) => {
-    if (platformId === 'instagram') {
-      router.push('/connect/instagram');
-    } else {
-      void connectToken(platformId, '');
-    }
-  };
+  // Each platform has its own screen: the connect flow when not connected, the account when connected.
+  const handleAction = (platformId: SocialPlatform) => router.push(accountHref(platformId));
 
   const connectionFor = (platform: string): ConnectedAccount | null | undefined =>
     state.status === 'success' ? (state.data.find((account) => account.platform === platform) ?? null) : undefined;
@@ -94,10 +87,9 @@ export default function ConnectedAccountsScreen() {
                 <PlatformCard
                   platform={platform}
                   connection={conn}
-                  onConnect={() => handleAction(platform.id, conn)}
-                  onManage={() => handleAction(platform.id, conn)}
+                  onConnect={() => handleAction(platform.id)}
+                  onManage={() => handleAction(platform.id)}
                   onDisconnect={conn ? () => handleDisconnect(conn) : undefined}
-                  connecting={connecting === platform.id}
                   disconnecting={conn ? disconnectingId === conn.id : false}
                 />
               </View>

@@ -10,6 +10,7 @@ import { MetricStrip } from '@/components/visual/Metrics';
 import { FadeIn } from '@/components/visual/Motion';
 import { Overline } from '@/components/visual/Typography';
 import { colors } from '@/constants/colors';
+import { platformOption } from '@/features/accounts/platforms';
 import { fetchIntelligenceOverview, fetchMediaPage } from '@/features/intelligence/api';
 import { EvidenceTag } from '@/features/intelligence/components/Evidence';
 import { FormatComparison, FormatMix } from '@/features/intelligence/components/FormatComparison';
@@ -108,7 +109,7 @@ function FormatsContent({ overview }: { overview: IntelligenceOverview }) {
           <FormatStory format={format} accountId={accountId} />
         </FadeIn>
       ))}
-      <Text className="text-caption text-neutral-400">Averages use only posts where Instagram provided the metric. {overview.definitions.interactions}</Text>
+      <Text className="text-caption text-neutral-400">Averages use only posts where {platformOption(overview.account.platform).name} provided the metric. {overview.definitions.interactions}</Text>
     </ScrollView>
   );
 }

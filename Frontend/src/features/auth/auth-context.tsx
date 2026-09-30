@@ -24,6 +24,8 @@ interface AuthContextValue {
   signOut(): Promise<SignOutResult>;
   /** Re-check the stored session with the server. */
   restoreSession(): Promise<void>;
+  /** Replace the signed-in user with a fresh copy returned by the server (e.g. after a profile edit). */
+  updateUser(user: User): void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -85,9 +87,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { serverRevoked };
   }, []);
 
+  const updateUser = useCallback((user: User) => {
+    setState((current) => (current.status === 'authenticated' ? { status: 'authenticated', user } : current));
+  }, []);
+
   const value = useMemo(
-    () => ({ state, signIn, signUp, signOut, restoreSession }),
-    [state, signIn, signUp, signOut, restoreSession],
+    () => ({ state, signIn, signUp, signOut, restoreSession, updateUser }),
+    [state, signIn, signUp, signOut, restoreSession, updateUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

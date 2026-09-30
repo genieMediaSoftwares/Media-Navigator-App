@@ -23,3 +23,8 @@ export function platformOption(id: SocialPlatform): PlatformOption {
   if (!option) throw new Error(`Unknown platform: ${id}`);
   return option;
 }
+
+/** Route to a platform's account screen (connect flow when not connected). */
+export function accountHref(platform: SocialPlatform) {
+  return platform === 'instagram' ? ('/connect/instagram' as const) : { pathname: '/connect/[platform]' as const, params: { platform } };
+}

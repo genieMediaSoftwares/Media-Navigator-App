@@ -1,9 +1,10 @@
 import { apiRequest } from '@/lib/api/client';
 import {
   AccountsResponse,
-  ConnectAccountResult,
   ConnectedAccount,
+  ConnectResponse,
   InstagramDashboardData,
+  PendingSelection,
   SocialPlatform,
   SyncSummary,
 } from '@/types/api';
@@ -13,16 +14,30 @@ export async function fetchConnectedAccounts(): Promise<ConnectedAccount[]> {
   return accounts;
 }
 
-/** Connects a social account using a user-supplied access token or initiates connection flow. */
-export function startAccountConnection(
-  platform: SocialPlatform,
-  accessToken?: string,
-): Promise<{ account?: ConnectedAccount } & Partial<ConnectAccountResult>> {
-  return apiRequest<{ account?: ConnectedAccount } & Partial<ConnectAccountResult>>('/api/accounts/connect', {
+/**
+ * Connects a platform with a user-supplied access token (Instagram, Facebook). Without a token the
+ * server answers with an OAuth authorization URL instead.
+ */
+export function startAccountConnection(platform: SocialPlatform, accessToken?: string): Promise<ConnectResponse> {
+  return apiRequest<ConnectResponse>('/api/accounts/connect', {
     method: 'POST',
     auth: true,
     json: { platform, ...(accessToken && { accessToken }) },
   });
+}
+
+/** OAuth authorization URL for the platform. The server redirects back to `returnUrl` (an app link) when done. */
+export function fetchAuthorizationUrl(platform: SocialPlatform, returnUrl: string): Promise<{ authorizationUrl: string }> {
+  return apiRequest(`/api/accounts/connect/${platform}?returnUrl=${encodeURIComponent(returnUrl)}`, { auth: true });
+}
+
+export async function fetchPendingSelection(id: string): Promise<PendingSelection> {
+  const { selection } = await apiRequest<{ selection: PendingSelection }>(`/api/accounts/pending/${encodeURIComponent(id)}`, { auth: true });
+  return selection;
+}
+
+export function selectPendingAccount(id: string, platformAccountId: string): Promise<Required<Pick<ConnectResponse, 'account'>>> {
+  return apiRequest(`/api/accounts/pending/${encodeURIComponent(id)}/select`, { method: 'POST', auth: true, json: { platformAccountId } });
 }
 
 /** Disconnects a connected account by ID. */

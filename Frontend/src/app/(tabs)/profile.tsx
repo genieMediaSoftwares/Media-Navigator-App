@@ -10,8 +10,6 @@ import { Gradient } from '@/components/visual/Gradient';
 import { useAuth } from '@/features/auth/auth-context';
 import { initials } from '@/lib/format';
 
-const NOT_AVAILABLE = 'Not available yet';
-
 function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
     <View className="mb-xl">
@@ -72,17 +70,17 @@ export default function ProfileScreen() {
         <Divider inset />
         <ListRow icon="notifications-outline" label="Notifications" onPress={() => router.push('/notifications')} />
         <Divider inset />
-        <ListRow icon="shield-checkmark-outline" label="Security" status={NOT_AVAILABLE} />
+        <ListRow icon="shield-checkmark-outline" label="Security" onPress={() => router.push('/settings/security')} />
         <Divider inset />
-        <ListRow icon="options-outline" label="Preferences" status={NOT_AVAILABLE} />
+        <ListRow icon="options-outline" label="Preferences" onPress={() => router.push('/settings/preferences')} />
       </Group>
 
       <Group title="Support">
-        <ListRow icon="help-circle-outline" label="Help" status={NOT_AVAILABLE} />
+        <ListRow icon="help-circle-outline" label="Help" onPress={() => router.push('/settings/help')} />
         <Divider inset />
-        <ListRow icon="lock-closed-outline" label="Privacy Policy" status={NOT_AVAILABLE} />
+        <ListRow icon="lock-closed-outline" label="Privacy Policy" onPress={() => router.push('/settings/privacy')} />
         <Divider inset />
-        <ListRow icon="document-text-outline" label="Terms" status={NOT_AVAILABLE} />
+        <ListRow icon="document-text-outline" label="Terms" onPress={() => router.push('/settings/terms')} />
       </Group>
 
       <Button title="Sign out" icon="log-out-outline" variant="danger" onPress={confirmSignOut} loading={signingOut} />

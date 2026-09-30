@@ -1,5 +1,5 @@
 // Client-side checks for fast feedback. They mirror Backend/src/lib/validation.ts;
-// the Worker remains the source of truth and re-validates every request.
+// the server remains the source of truth and re-validates every request.
 
 export const PASSWORD_MIN_LENGTH = 8;
 const PASSWORD_MAX_LENGTH = 128;

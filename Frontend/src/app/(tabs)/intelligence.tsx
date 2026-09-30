@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Text, View } from 'react-native';
 
@@ -9,6 +9,7 @@ import { ListRow } from '@/components/ListRow';
 import { TabScreen } from '@/components/TabScreen';
 import { IconButton } from '@/components/ui/IconButton';
 import { syncAccount } from '@/features/accounts/api';
+import { accountHref, platformOption } from '@/features/accounts/platforms';
 import { fetchIntelligenceOverview } from '@/features/intelligence/api';
 import { IntelligenceContent } from '@/features/intelligence/components/IntelligenceContent';
 import { IntelligenceSkeleton } from '@/features/intelligence/components/IntelligenceSkeleton';
@@ -20,7 +21,9 @@ import { MetricDefinitions } from '@/types/api';
 
 export default function IntelligenceScreen() {
   const router = useRouter();
-  const [accountId, setAccountId] = useState<string | null>(null);
+  // An account screen can open Intelligence on a specific account; otherwise the server picks the default.
+  const params = useLocalSearchParams<{ accountId?: string }>();
+  const [accountId, setAccountId] = useState<string | null>(params.accountId || null);
   const fetcher = useCallback(() => fetchIntelligenceOverview(accountId), [accountId]);
   const { state, refreshing, reload, refresh } = useApiResource(fetcher);
   const [sync, setSync] = useState<SyncState>({ status: 'idle' });
@@ -28,6 +31,7 @@ export default function IntelligenceScreen() {
   const [definitions, setDefinitions] = useState<MetricDefinitions | null>(null);
 
   const overview = state.status === 'success' ? state.data.overview : null;
+  const platform = platformOption(overview?.account.platform ?? 'instagram');
 
   const runSync = useCallback(async () => {
     if (!overview) return;
@@ -42,10 +46,10 @@ export default function IntelligenceScreen() {
       setSync({
         status: 'error',
         code: error instanceof ApiError ? error.code : undefined,
-        message: error instanceof Error ? error.message : 'Instagram sync failed.',
+        message: error instanceof Error ? error.message : `${platform.name} sync failed.`,
       });
     }
-  }, [overview, refresh]);
+  }, [overview, refresh, platform.name]);
 
   const closeMenuThen = (action: () => void) => () => {
     setMenuOpen(false);
@@ -63,8 +67,9 @@ export default function IntelligenceScreen() {
       <SyncStatus
         state={sync}
         onRetry={() => void runSync()}
-        onReconnect={() => router.push('/connect/instagram')}
+        onReconnect={() => router.push(accountHref(platform.id))}
         onDismiss={() => setSync({ status: 'idle' })}
+        platformName={platform.name}
       />
 
       <AsyncContent
@@ -110,7 +115,7 @@ export default function IntelligenceScreen() {
             onPress={closeMenuThen(() => overview && router.push({ pathname: '/intelligence/ask', params: { accountId: overview.account.id } }))}
           />
           <ListRow icon="information-circle-outline" label="How metrics are calculated" onPress={closeMenuThen(() => setDefinitions(overview?.definitions ?? null))} />
-          <ListRow icon="logo-instagram" label="Manage Instagram connection" onPress={closeMenuThen(() => router.push('/connect/instagram'))} />
+          <ListRow icon={platform.icon} label={`Manage ${platform.name} connection`} onPress={closeMenuThen(() => router.push(accountHref(platform.id)))} />
         </View>
       </BottomSheet>
 
@@ -133,7 +138,7 @@ export default function IntelligenceScreen() {
               </View>
             ))
           : null}
-        <Text className="text-caption text-neutral-500">“Not available” means Instagram did not provide that metric. It is never shown as zero.</Text>
+        <Text className="text-caption text-neutral-500">“Not available” means {platform.name} did not provide that metric. It is never shown as zero.</Text>
       </BottomSheet>
     </TabScreen>
   );

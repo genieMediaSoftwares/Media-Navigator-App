@@ -11,6 +11,7 @@ import { MetricStrip, PerformanceBar } from '@/components/visual/Metrics';
 import { FadeIn } from '@/components/visual/Motion';
 import { Overline } from '@/components/visual/Typography';
 import { colors } from '@/constants/colors';
+import { platformOption } from '@/features/accounts/platforms';
 import { fetchPostDetail } from '@/features/intelligence/api';
 import { EvidenceTag } from '@/features/intelligence/components/Evidence';
 import { MediaThumb } from '@/features/intelligence/components/MediaThumb';
@@ -63,6 +64,7 @@ function PostDetailContent({ detail, accountId, autoAnalyze }: { detail: PostDet
   const num = (value: number | null) => (value === null ? null : formatCompactNumber(value));
   const barMax = Math.max(post.interactions ?? 0, comparison.accountAvgInteractions ?? 0, comparison.formatAvgInteractions ?? 0);
   const delta = comparison.vsAccountPercent;
+  const platform = platformOption(detail.account.platform);
   const openInstagram = post.permalink ? () => void Linking.openURL(post.permalink as string) : undefined;
 
   return (
@@ -77,13 +79,13 @@ function PostDetailContent({ detail, accountId, autoAnalyze }: { detail: PostDet
                 <Ionicons name={format.icon} size={13} color={colors.white} />
                 <Text className="ml-1 text-overline uppercase text-white">{format.singular}</Text>
               </View>
-              <Text className="text-label font-semibold text-white">Instagram{post.publishedAt ? ` · ${formatDate(post.publishedAt)}` : ''}</Text>
+              <Text className="text-label font-semibold text-white">{platform.name}{post.publishedAt ? ` · ${formatDate(post.publishedAt)}` : ''}</Text>
             </View>
             {openInstagram ? (
               <Pressable
                 onPress={openInstagram}
                 accessibilityRole="link"
-                accessibilityLabel="Open on Instagram"
+                accessibilityLabel={`Open on ${platform.name}`}
                 className="h-12 w-12 items-center justify-center rounded-full"
                 style={{ backgroundColor: colors.onDarkSubtle }}
               >
@@ -191,9 +193,9 @@ function PostDetailContent({ detail, accountId, autoAnalyze }: { detail: PostDet
           autoStart={autoAnalyze}
         />
 
-        {openInstagram ? <Button title="Open on Instagram" icon="logo-instagram" variant="secondary" onPress={openInstagram} /> : null}
+        {openInstagram ? <Button title={`Open on ${platform.name}`} icon={platform.icon} variant="secondary" onPress={openInstagram} /> : null}
         {post.metrics.views === null ? (
-          <Text className="mt-md text-center text-caption text-neutral-400">{NOT_AVAILABLE} means Instagram did not provide that metric for this post.</Text>
+          <Text className="mt-md text-center text-caption text-neutral-400">{NOT_AVAILABLE} means {platform.name} did not provide that metric for this post.</Text>
         ) : null}
       </View>
     </>

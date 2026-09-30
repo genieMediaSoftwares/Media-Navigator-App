@@ -59,7 +59,7 @@ export function EvidenceBlock({ title, kind, children }: { title: string; kind: 
   );
 }
 
-/** Numbers rebuilt by the Worker from synced data for the posts / formats the AI cited. */
+/** Numbers rebuilt by the server from synced data for the posts / formats the AI cited. */
 export function SupportingDataList({ data, accountId }: { data: SupportingData; accountId: string | null }) {
   const router = useRouter();
   if (data.posts.length === 0 && data.formats.length === 0) {

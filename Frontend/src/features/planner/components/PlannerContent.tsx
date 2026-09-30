@@ -83,7 +83,7 @@ export function PlannerContent({ insights }: { insights: PlannerInsights }) {
 
       <View className="mt-lg">
         <Button title="Schedule a post" icon="add" onPress={() => undefined} disabled />
-        <Text className="mt-sm text-center text-caption text-neutral-500">Scheduling isn’t available yet.</Text>
+        <Text className="mt-sm text-center text-caption text-neutral-500">{insights.scheduling?.reason ?? 'Scheduling isn’t available yet.'}</Text>
       </View>
     </View>
   );

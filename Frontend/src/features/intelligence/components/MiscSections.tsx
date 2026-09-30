@@ -73,7 +73,7 @@ function TimingChart({ timing }: { timing: IntelligenceOverview['timing'] }) {
 }
 
 /** Assistant entry: a soft AI band with a search-like prompt and real-question suggestions. */
-export function AskBand({ aiConfigured, onAsk }: { aiConfigured: boolean; onAsk: (question?: string) => void }) {
+export function AskBand({ aiConfigured, onAsk, platformName = 'Instagram' }: { aiConfigured: boolean; onAsk: (question?: string) => void; platformName?: string }) {
   return (
     <Gradient name="aiSoft" style={{ marginHorizontal: -24, paddingHorizontal: 24, paddingVertical: 28, marginBottom: 32 }}>
       <Overline icon="sparkles" color={colors.violet}>
@@ -83,7 +83,7 @@ export function AskBand({ aiConfigured, onAsk }: { aiConfigured: boolean; onAsk:
       <PressableScale
         onPress={() => onAsk()}
         accessibilityRole="button"
-        accessibilityLabel="Ask something about your Instagram performance"
+        accessibilityLabel={`Ask something about your ${platformName} performance`}
         className="mt-lg min-h-14 flex-row items-center rounded-full bg-white px-lg"
         style={{ shadowColor: colors.violet, shadowOpacity: 0.15, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 3 }}
       >
@@ -113,7 +113,17 @@ export function AskBand({ aiConfigured, onAsk }: { aiConfigured: boolean; onAsk:
 }
 
 /** Full-history editorial block: a mosaic of real recent media, the archive size and one way in. */
-export function ArchiveSection({ archive, recent, onOpen }: { archive: IntelligenceOverview['archive']; recent: IntelligencePost[] | null; onOpen: () => void }) {
+export function ArchiveSection({
+  archive,
+  recent,
+  onOpen,
+  platformName = 'Instagram',
+}: {
+  archive: IntelligenceOverview['archive'];
+  recent: IntelligencePost[] | null;
+  onOpen: () => void;
+  platformName?: string;
+}) {
   const partial = archive.profileMediaCount !== null && archive.profileMediaCount > archive.syncedCount;
   const mosaic = (recent ?? []).slice(0, 4);
 
@@ -124,7 +134,7 @@ export function ArchiveSection({ archive, recent, onOpen }: { archive: Intellige
         <View className="flex-1" accessible>
           <Text className="text-hero text-navy">{archive.syncedCount.toLocaleString()}</Text>
           <Text className="text-label font-normal text-neutral-500">
-            {partial ? `most recent of ${archive.profileMediaCount?.toLocaleString()} on Instagram` : 'posts synced'}
+            {partial ? `most recent of ${archive.profileMediaCount?.toLocaleString()} on ${platformName}` : 'posts synced'}
           </Text>
           {archive.oldestPublishedAt ? <Text className="mt-xs text-caption text-neutral-400">since {formatDate(archive.oldestPublishedAt)}</Text> : null}
         </View>

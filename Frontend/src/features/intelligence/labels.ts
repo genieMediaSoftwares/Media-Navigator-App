@@ -23,7 +23,7 @@ export const INSIGHT_LABELS: Record<InsightType, { label: string; icon: IconName
   risk: { label: 'Watch out', icon: 'alert-circle-outline' },
 };
 
-/** Suggested starting points for Ask Media Navigator. Answers always come from the Worker. */
+/** Suggested starting points for Ask Media Navigator. Answers always come from the server. */
 export const SUGGESTED_QUESTIONS = [
   'Which posts performed best?',
   'What content generated the most engagement?',
@@ -34,14 +34,19 @@ export const SUGGESTED_QUESTIONS = [
   'When does my content perform best?',
 ] as const;
 
-/** Actionable copy for Worker error codes the Intelligence screens can hit. */
-export function describeIntelligenceError(code: string | undefined, fallback: string): { title: string; message: string; reconnect: boolean } {
+/** Actionable copy for server error codes the Intelligence screens can hit. */
+export function describeIntelligenceError(
+  code: string | undefined,
+  fallback: string,
+  platformName = 'Instagram',
+): { title: string; message: string; reconnect: boolean } {
   switch (code) {
     case 'REAUTHORIZATION_REQUIRED':
     case 'INVALID_TOKEN':
-      return { title: 'Instagram connection expired', message: 'Reconnect Instagram to keep your analytics up to date.', reconnect: true };
+      return { title: `${platformName} connection expired`, message: `Reconnect ${platformName} to keep your analytics up to date.`, reconnect: true };
     case 'SYNC_FAILED':
     case 'META_API_ERROR':
+    case 'PLATFORM_API_ERROR':
       return { title: 'Sync failed', message: fallback, reconnect: false };
     case 'AI_UNAVAILABLE':
       return { title: 'AI analysis is temporarily unavailable', message: 'Your metrics are still up to date. Try again in a moment.', reconnect: false };
@@ -56,7 +61,7 @@ export function describeIntelligenceError(code: string | undefined, fallback: st
   }
 }
 
-/** Display mirror of the Worker's classifyFormat(), for raw Meta fields from the account dashboard endpoint. */
+/** Display mirror of the server's classifyFormat(), for raw Meta fields from the account dashboard endpoint. */
 export function classifyFormat(mediaType: string | null, mediaProductType: string | null): ContentFormat {
   if (mediaProductType === 'REELS') return 'REEL';
   if (mediaProductType === 'STORY') return 'STORY';

@@ -14,7 +14,7 @@ interface DayStat {
   posts: number;
 }
 
-/** Aggregates the Worker's measured day×time cells to a weighted average per weekday. */
+/** Aggregates the server's measured day×time cells to a weighted average per weekday. */
 export function daysFromCells(cells: TimingCell[]): DayStat[] {
   return [0, 1, 2, 3, 4, 5, 6].map((day) => {
     const dayCells = cells.filter((c) => c.dayOfWeek === day);

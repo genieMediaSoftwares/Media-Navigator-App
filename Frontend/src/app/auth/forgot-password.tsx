@@ -13,7 +13,7 @@ import { ApiError } from '@/lib/api/client';
 
 type Result = { variant: 'error' | 'warning' | 'success'; title: string; message: string };
 
-// The Worker endpoint exists but returns 501 PASSWORD_RESET_NOT_CONFIGURED until an email
+// The server endpoint exists but returns 501 PASSWORD_RESET_NOT_CONFIGURED until an email
 // provider is set up. This screen shows the server's real answer and never claims an email was sent.
 export default function ForgotPasswordScreen() {
   const [email, setEmail] = useState('');

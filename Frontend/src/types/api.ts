@@ -1,4 +1,4 @@
-// Data contracts for Media Navigator Worker responses (the `data` field of the envelope).
+// Data contracts for Media Navigator API server responses (the `data` field of the envelope).
 // Type definitions only: every value the app renders must come from the API.
 // Dates are ISO 8601 strings. Scores are 0–100 unless noted. Nullable fields mean "not provided
 // by the platform/backend" and must be rendered as unavailable, never guessed.
@@ -44,6 +44,29 @@ export interface AccountsResponse {
 export interface ConnectAccountResult {
   /** Platform OAuth URL to open in the browser. */
   authorizationUrl: string;
+}
+
+/** One account (Facebook Page, YouTube channel, LinkedIn organization) offered after authorization. */
+export interface PendingAccountOption {
+  platformAccountId: string;
+  accountName: string | null;
+  accountUsername: string;
+  profilePictureUrl: string | null;
+}
+
+/** An authorization that covers several accounts and waits for the user's choice (expires after 15 minutes). */
+export interface PendingSelection {
+  id: string;
+  platform: SocialPlatform;
+  options: PendingAccountOption[];
+  expiresAt: string;
+}
+
+/** Result of POST /api/accounts/connect: a connected account, a choice to make, or an OAuth URL to open. */
+export interface ConnectResponse {
+  account?: { id: string; platform: SocialPlatform; accountName: string | null; username: string; status: ConnectionStatus };
+  selection?: PendingSelection;
+  authorizationUrl?: string;
 }
 
 export interface SyncSummary {
@@ -131,6 +154,9 @@ export interface QuickInsight {
   changePercent: number | null;
   /** Human-readable period supplied by the backend, e.g. "Last 7 days". */
   period: string;
+  /** The account the value belongs to (present since multi-platform support). */
+  platform?: SocialPlatform;
+  accountId?: string;
 }
 
 export interface HomeOverview {
@@ -141,7 +167,7 @@ export interface HomeOverview {
 }
 
 // ---- Intelligence (/api/intelligence/*) ----------------------------------
-// Every number is computed by the Worker from synced Meta data. `null` means Instagram did not
+// Every number is computed by the server from synced Meta data. `null` means Instagram did not
 // provide the value: render "Not available", never 0.
 
 export type ContentFormat = 'REEL' | 'POST' | 'CAROUSEL' | 'VIDEO' | 'STORY';
@@ -293,7 +319,7 @@ export interface SupportingPost {
   vsBaselinePercent: number | null;
 }
 
-/** Rebuilt by the Worker from stored data; never written by the AI model. */
+/** Rebuilt by the server from stored data; never written by the AI model. */
 export interface SupportingData {
   posts: SupportingPost[];
   formats: FormatPerformance[];
@@ -301,7 +327,7 @@ export interface SupportingData {
 
 export type InsightType = 'pattern' | 'growth' | 'timing' | 'format' | 'risk';
 
-/** Produced by the Worker (which calls Gemini); never generated on the device. */
+/** Produced by the server (which calls Gemini); never generated on the device. */
 export interface AiInsight {
   id: string;
   type: InsightType;
@@ -425,6 +451,11 @@ export interface PlannerInsights {
   minimumRequired: number;
   heatmap: TimingCell[];
   recommendedWindows: PublishingWindow[];
+  /** The account the timing was measured for, and the accounts that can be chosen instead. */
+  account?: IntelligenceAccount;
+  accounts?: IntelligenceAccount[];
+  /** Publishing/scheduling support, stated by the server. */
+  scheduling?: { supported: boolean; reason: string };
 }
 
 // ---- Notifications (GET /api/notifications) -----------------------------
@@ -441,4 +472,15 @@ export interface AppNotification {
 
 export interface NotificationsResponse {
   notifications: AppNotification[];
+  unreadCount: number;
+}
+
+// ---- Profile & security (/api/profile, /api/auth) --------------------------
+
+export interface UserPreferences {
+  /** IANA zone used for timing when set; null = the device's zone. */
+  timeZone: string | null;
+  notifySyncResults: boolean;
+  notifyAiInsights: boolean;
+  notifyConnectionIssues: boolean;
 }

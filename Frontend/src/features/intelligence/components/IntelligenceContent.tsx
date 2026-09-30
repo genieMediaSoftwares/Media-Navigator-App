@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { FadeIn } from '@/components/visual/Motion';
 import { SectionTitle } from '@/components/visual/Typography';
 import { colors } from '@/constants/colors';
+import { accountHref, platformOption } from '@/features/accounts/platforms';
 import { useApiResource } from '@/hooks/useApiResource';
 import { IntelligenceAccount, IntelligenceOverview } from '@/types/api';
 
@@ -41,6 +42,7 @@ export function IntelligenceContent({ overview, accounts, onSelectAccount, onSyn
   const { width } = useWindowDimensions();
   const accountId = overview.account.id;
   const version = overview.account.lastSyncedAt;
+  const platformName = platformOption(overview.account.platform).name;
 
   // Real recent posts power the hero chart, the recent rail and the archive mosaic.
   const recentFetcher = useCallback(
@@ -69,10 +71,10 @@ export function IntelligenceContent({ overview, accounts, onSelectAccount, onSyn
       {overview.account.status !== 'connected' ? (
         <View className="mb-xl flex-row items-center rounded-2xl bg-warning-light p-lg" accessibilityRole="alert">
           <View className="flex-1">
-            <Text className="text-label font-semibold text-navy">Instagram needs to be reconnected</Text>
+            <Text className="text-label font-semibold text-navy">{platformName} needs to be reconnected</Text>
             <Text className="mt-xs text-caption text-neutral-500">You’re seeing your last synced data.</Text>
           </View>
-          <Pressable onPress={() => router.push('/connect/instagram')} accessibilityRole="button" className="min-h-11 justify-center rounded-full bg-white px-lg">
+          <Pressable onPress={() => router.push(accountHref(overview.account.platform))} accessibilityRole="button" className="min-h-11 justify-center rounded-full bg-white px-lg">
             <Text className="text-label font-bold text-warning">Reconnect</Text>
           </Pressable>
         </View>
@@ -81,8 +83,8 @@ export function IntelligenceContent({ overview, accounts, onSelectAccount, onSyn
       {overview.archive.syncedCount === 0 ? (
         <EmptyState
           icon="cloud-download-outline"
-          title="No Instagram media has been synchronized yet"
-          message="Sync your account to bring in your posts and their real metrics from Instagram."
+          title={`No ${platformName} content has been synchronized yet`}
+          message={`Sync your account to bring in your posts and their real metrics from ${platformName}.`}
           action={syncing ? undefined : { label: 'Sync now', onPress: onSync }}
         />
       ) : (
@@ -172,9 +174,10 @@ export function IntelligenceContent({ overview, accounts, onSelectAccount, onSyn
           <AskBand
             aiConfigured={overview.aiConfigured}
             onAsk={(question) => router.push({ pathname: '/intelligence/ask', params: { accountId, ...(question && { q: question }) } })}
+            platformName={platformName}
           />
 
-          <ArchiveSection archive={overview.archive} recent={recent} onOpen={() => openLibrary()} />
+          <ArchiveSection archive={overview.archive} recent={recent} onOpen={() => openLibrary()} platformName={platformName} />
 
           {overview.lastSyncRun?.status === 'failed' ? (
             <Text className="mb-sm text-center text-caption text-danger">Last sync failed: {overview.lastSyncRun.errorMessage ?? 'Unknown error'}</Text>

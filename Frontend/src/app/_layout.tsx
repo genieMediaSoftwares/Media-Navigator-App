@@ -43,7 +43,7 @@ function RootNavigator() {
     );
   }
 
-  // Client-side guards only decide which screens are reachable. The Worker is the source of
+  // Client-side guards only decide which screens are reachable. The server is the source of
   // truth: every protected request is re-authenticated, and a 401 signs the user out here.
   const isAuthenticated = state.status === 'authenticated';
 
@@ -55,6 +55,13 @@ function RootNavigator() {
         <Stack.Screen name="connected-accounts" options={{ ...pushedScreenOptions, title: 'Connected accounts' }} />
         <Stack.Screen name="notifications" options={{ ...pushedScreenOptions, title: 'Notifications' }} />
         <Stack.Screen name="connect/instagram" options={{ ...pushedScreenOptions, title: 'Instagram' }} />
+        <Stack.Screen name="connect/[platform]" options={{ ...pushedScreenOptions, title: '' }} />
+        <Stack.Screen name="oauth/callback" options={{ ...pushedScreenOptions, title: 'Connect account' }} />
+        <Stack.Screen name="settings/security" options={{ ...pushedScreenOptions, title: 'Security' }} />
+        <Stack.Screen name="settings/preferences" options={{ ...pushedScreenOptions, title: 'Preferences' }} />
+        <Stack.Screen name="settings/help" options={{ ...pushedScreenOptions, title: 'Help' }} />
+        <Stack.Screen name="settings/privacy" options={{ ...pushedScreenOptions, title: 'Privacy Policy' }} />
+        <Stack.Screen name="settings/terms" options={{ ...pushedScreenOptions, title: 'Terms' }} />
         <Stack.Screen name="intelligence/library" options={{ ...pushedScreenOptions, title: 'Content library' }} />
         <Stack.Screen name="intelligence/post/[id]" options={{ ...pushedScreenOptions, title: 'Post performance' }} />
         <Stack.Screen name="intelligence/insight/[id]" options={{ ...pushedScreenOptions, title: 'AI insight' }} />

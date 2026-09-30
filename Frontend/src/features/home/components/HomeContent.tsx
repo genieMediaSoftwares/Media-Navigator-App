@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
-import { ComponentProps } from 'react';
+import { ComponentProps, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
 import { Gradient } from '@/components/visual/Gradient';
@@ -9,13 +9,16 @@ import { FadeIn, PressableScale } from '@/components/visual/Motion';
 import { Overline, SectionTitle } from '@/components/visual/Typography';
 import { colors } from '@/constants/colors';
 import { elevation } from '@/constants/theme';
-import { platformOption } from '@/features/accounts/platforms';
+import { accountHref, platformOption } from '@/features/accounts/platforms';
 import { describeChange, formatCompactNumber, formatPercent, NOT_AVAILABLE } from '@/lib/format';
-import { ChannelSummary, HomeOverview, QuickInsight } from '@/types/api';
+import { ChannelSummary, HomeOverview, QuickInsight, SocialPlatform } from '@/types/api';
 
 import { HeroSignalBanner } from './HeroSignalBanner';
 
 type IconName = ComponentProps<typeof Ionicons>['name'];
+
+/** What each platform calls its audience. */
+const AUDIENCE: Record<SocialPlatform, string> = { instagram: 'followers', facebook: 'followers', youtube: 'subscribers', linkedin: 'followers' };
 
 function insightValue(insight: QuickInsight): string {
   return insight.unit === 'percent' ? formatPercent(insight.value) : formatCompactNumber(insight.value);
@@ -40,7 +43,7 @@ function ChannelHero({ channel, onOpen }: { channel: ChannelSummary; onOpen: () 
           </View>
           <Ionicons name="arrow-forward" size={20} color={colors.white} />
         </View>
-        <View className="mt-xl" accessible accessibilityLabel={`Followers: ${channel.followers === null ? NOT_AVAILABLE : formatCompactNumber(channel.followers)}`}>
+        <View className="mt-xl" accessible accessibilityLabel={`${AUDIENCE[channel.platform]}: ${channel.followers === null ? NOT_AVAILABLE : formatCompactNumber(channel.followers)}`}>
           {channel.followers !== null ? (
             <Text className="text-hero text-white">{formatCompactNumber(channel.followers)}</Text>
           ) : (
@@ -49,7 +52,8 @@ function ChannelHero({ channel, onOpen }: { channel: ChannelSummary; onOpen: () 
             </Text>
           )}
           <Text className="text-label font-normal" style={{ color: colors.onDarkMuted }}>
-            followers{change ? ` · ${change.direction === 'flat' ? 'unchanged' : change.text}` : ''}
+            {AUDIENCE[channel.platform]}
+            {change ? ` · ${change.direction === 'flat' ? 'unchanged' : change.text}` : ''}
           </Text>
         </View>
         <View className="my-lg h-px" style={{ backgroundColor: colors.onDarkSubtle }} />
@@ -77,15 +81,52 @@ function Shortcut({ icon, label, tint, color, onPress }: { icon: IconName; label
   );
 }
 
+/** Platform filter chips; rendered only when more than one platform is connected. */
+function PlatformFilter({ platforms, value, onChange }: { platforms: SocialPlatform[]; value: SocialPlatform | 'all'; onChange: (value: SocialPlatform | 'all') => void }) {
+  const options: Array<{ value: SocialPlatform | 'all'; label: string; icon?: IconName }> = [
+    { value: 'all', label: 'All' },
+    ...platforms.map((id) => ({ value: id, label: platformOption(id).name, icon: platformOption(id).icon })),
+  ];
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} className="-mx-xl mb-xl" contentContainerClassName="px-xl" accessibilityRole="tablist">
+      {options.map((option) => {
+        const selected = option.value === value;
+        return (
+          <Pressable
+            key={option.value}
+            onPress={() => onChange(option.value)}
+            accessibilityRole="tab"
+            accessibilityState={{ selected }}
+            className={`mr-sm min-h-10 flex-row items-center rounded-full px-lg ${selected ? 'bg-navy' : 'bg-neutral-100'}`}
+          >
+            {option.icon ? <Ionicons name={option.icon} size={15} color={selected ? colors.white : colors.navy} style={{ marginRight: 6 }} /> : null}
+            <Text className={`text-label ${selected ? 'font-semibold text-white' : 'text-navy'}`}>{option.label}</Text>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
 /** Home success state. Every value rendered here comes from GET /api/overview. */
 export function HomeContent({ overview }: { overview: HomeOverview }) {
   const router = useRouter();
-  const [primary, ...others] = overview.channels;
-  const openIntelligence = () => router.navigate('/intelligence');
+  const platforms = useMemo(() => [...new Set(overview.channels.map((c) => c.platform))], [overview.channels]);
+  const [filter, setFilter] = useState<SocialPlatform | 'all'>('all');
+  const selected = filter !== 'all' && platforms.includes(filter) ? filter : 'all';
+  const channels = selected === 'all' ? overview.channels : overview.channels.filter((c) => c.platform === selected);
+  const [primary, ...others] = channels;
+  // "Your numbers" describe the hero account (older servers sent no accountId: all values were that account's).
+  const insights = overview.insights.filter((i) => i.accountId === undefined || i.accountId === primary?.accountId);
+  const primaryPlatform = platformOption(primary?.platform ?? 'instagram');
+  const openIntelligence = () =>
+    primary && primary.platform !== 'instagram' ? router.navigate({ pathname: '/intelligence', params: { accountId: primary.accountId } }) : router.navigate('/intelligence');
 
   return (
     <View>
       {overview.heroSignal ? <HeroSignalBanner signal={overview.heroSignal} /> : null}
+
+      {platforms.length > 1 ? <PlatformFilter platforms={platforms} value={selected} onChange={setFilter} /> : null}
 
       {primary ? (
         <FadeIn className="mb-2xl">
@@ -102,18 +143,18 @@ export function HomeContent({ overview }: { overview: HomeOverview }) {
           <Shortcut icon="grid" label="Library" tint={colors.sky} color={colors.primaryBright} onPress={() => (primary ? router.push({ pathname: '/intelligence/library', params: { accountId: primary.accountId } }) : openIntelligence())} />
           <Shortcut icon="chatbubble-ellipses" label="Ask AI" tint={colors.magentaLight} color={colors.magenta} onPress={() => router.push({ pathname: '/intelligence/ask', params: { accountId: primary?.accountId ?? '' } })} />
           <Shortcut icon="calendar" label="Planner" tint={colors.cyanLight} color={colors.cyan} onPress={() => router.navigate('/planner')} />
-          <Shortcut icon="logo-instagram" label="Account" tint={colors.neutral100} color={colors.navy} onPress={() => router.push('/connect/instagram')} />
+          <Shortcut icon={primaryPlatform.icon} label="Account" tint={colors.neutral100} color={colors.navy} onPress={() => router.push(accountHref(primaryPlatform.id))} />
         </ScrollView>
       </FadeIn>
 
       <FadeIn index={2} className="mb-2xl">
         <SectionTitle eyebrow="At a glance" eyebrowIcon="pulse" title="Your numbers" />
-        {overview.insights.length === 0 ? (
+        {insights.length === 0 ? (
           <Text className="text-body text-neutral-500">No insights available yet.</Text>
         ) : (
           <>
-            <MetricStrip metrics={overview.insights.slice(0, 3).map((insight) => ({ label: insight.label.replace(/^Instagram /, ''), value: insightValue(insight) }))} />
-            <Text className="mt-md text-center text-caption text-neutral-400">{overview.insights.slice(0, 3).map((i) => i.period).join(' · ')}</Text>
+            <MetricStrip metrics={insights.slice(0, 3).map((insight) => ({ label: insight.label.replace(`${primaryPlatform.name} `, ''), value: insightValue(insight) }))} />
+            <Text className="mt-md text-center text-caption text-neutral-400">{insights.slice(0, 3).map((i) => i.period).join(' · ')}</Text>
           </>
         )}
       </FadeIn>
@@ -127,7 +168,9 @@ export function HomeContent({ overview }: { overview: HomeOverview }) {
               <View key={channel.accountId} className="flex-row items-center py-md" accessible>
                 <Ionicons name={platform.icon} size={22} color={colors.navy} />
                 <Text className="ml-md flex-1 text-body text-navy">@{channel.handle}</Text>
-                <Text className="text-label text-navy">{formatCompactNumber(channel.followers)} followers</Text>
+                <Text className="text-label text-navy">
+                  {formatCompactNumber(channel.followers)} {AUDIENCE[channel.platform]}
+                </Text>
               </View>
             );
           })}

@@ -4,9 +4,9 @@ import { ApiError } from '@/lib/api/client';
 
 export type ResourceState<T> =
   | { status: 'loading' }
-  /** The Worker reported the feature is not built yet (501 FEATURE_NOT_AVAILABLE). */
+  /** The server reported the feature is not built yet (501 FEATURE_NOT_AVAILABLE). */
   | { status: 'unavailable'; message: string }
-  /** `code` is the Worker's machine-readable error code (e.g. AI_UNAVAILABLE), when there was a response. */
+  /** `code` is the server's machine-readable error code (e.g. AI_UNAVAILABLE), when there was a response. */
   | { status: 'error'; message: string; code?: string }
   | { status: 'success'; data: T };
 

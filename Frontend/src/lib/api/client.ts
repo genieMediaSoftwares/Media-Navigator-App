@@ -8,7 +8,7 @@ export class ApiError extends Error {
     message: string,
     /** HTTP status, or 0 when no response was received. */
     readonly status: number,
-    /** Machine-readable code from the Worker (e.g. INVALID_CREDENTIALS) or a client-side code. */
+    /** Machine-readable code from the server (e.g. INVALID_CREDENTIALS) or a client-side code. */
     readonly code: string,
     readonly fields?: FieldErrors,
   ) {
@@ -40,7 +40,7 @@ async function handleUnauthorized(): Promise<void> {
   unauthorizedHandler?.();
 }
 
-// Thin fetch wrapper for the Media Navigator Worker. Failures are always thrown to the
+// Thin fetch wrapper for the Media Navigator API server. Failures are always thrown to the
 // caller so screens can render a real error state; there is no fallback data.
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   const { json, auth = false, ...init } = options;

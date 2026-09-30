@@ -27,7 +27,8 @@
       "expo-router",
       "expo-secure-store",
       "expo-font",
-      "expo-image"
+      "expo-image",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true

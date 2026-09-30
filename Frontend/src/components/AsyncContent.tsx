@@ -11,7 +11,7 @@ interface AsyncContentProps<T> {
   onRetry: () => void;
   /** Skeleton or LoadingState matching the success layout. */
   loading: ReactNode;
-  /** Shown when the Worker reports the feature is not built yet; the message comes from the API. */
+  /** Shown when the server reports the feature is not built yet; the message comes from the API. */
   unavailable: {
     icon: ComponentProps<typeof Ionicons>['name'];
     title: string;

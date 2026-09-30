@@ -16,22 +16,25 @@ interface SyncStatusProps {
   onRetry: () => void;
   onReconnect: () => void;
   onDismiss: () => void;
+  /** Display name of the account's platform. */
+  platformName?: string;
 }
 
 /**
- * Inline sync feedback. The Worker syncs in a single request, so this shows one honest
+ * Inline sync feedback. The server syncs in a single request, so this shows one honest
  * in-progress state (no simulated step-by-step progress) and the real count when it finishes.
  */
-export function SyncStatus({ state, onRetry, onReconnect, onDismiss }: SyncStatusProps) {
+export function SyncStatus({ state, onRetry, onReconnect, onDismiss, platformName = 'Instagram' }: SyncStatusProps) {
   if (state.status === 'idle') return null;
+  const source = platformName === 'Instagram' || platformName === 'Facebook' ? 'Meta' : platformName;
 
   if (state.status === 'syncing') {
     return (
-      <View className="mb-xl flex-row items-center rounded-lg bg-sky p-lg" accessibilityRole="progressbar" accessibilityLiveRegion="polite" accessibilityLabel="Syncing Instagram">
+      <View className="mb-xl flex-row items-center rounded-lg bg-sky p-lg" accessibilityRole="progressbar" accessibilityLiveRegion="polite" accessibilityLabel={`Syncing ${platformName}`}>
         <ActivityIndicator color={colors.primary} />
         <View className="ml-md flex-1">
-          <Text className="text-label font-semibold text-navy">Syncing Instagram…</Text>
-          <Text className="mt-xs text-caption text-neutral-500">Fetching your profile, media and metrics from Meta.</Text>
+          <Text className="text-label font-semibold text-navy">Syncing {platformName}…</Text>
+          <Text className="mt-xs text-caption text-neutral-500">Fetching your profile, media and metrics from {source}.</Text>
         </View>
       </View>
     );
@@ -54,7 +57,7 @@ export function SyncStatus({ state, onRetry, onReconnect, onDismiss }: SyncStatu
     );
   }
 
-  const copy = describeIntelligenceError(state.code ?? 'SYNC_FAILED', state.message);
+  const copy = describeIntelligenceError(state.code ?? 'SYNC_FAILED', state.message, platformName);
   return (
     <View className="mb-xl rounded-lg bg-danger-light p-lg" accessibilityRole="alert">
       <View className="flex-row">
@@ -69,7 +72,7 @@ export function SyncStatus({ state, onRetry, onReconnect, onDismiss }: SyncStatu
           <Text className="text-label font-semibold text-neutral-500">Dismiss</Text>
         </Pressable>
         <Pressable onPress={copy.reconnect ? onReconnect : onRetry} accessibilityRole="button" className="min-h-11 justify-center rounded-md px-md active:bg-white">
-          <Text className="text-label font-semibold text-primary">{copy.reconnect ? 'Reconnect Instagram' : 'Try again'}</Text>
+          <Text className="text-label font-semibold text-primary">{copy.reconnect ? `Reconnect ${platformName}` : 'Try again'}</Text>
         </Pressable>
       </View>
     </View>

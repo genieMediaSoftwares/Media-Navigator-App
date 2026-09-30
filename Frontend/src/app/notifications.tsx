@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { RefreshControl, ScrollView, Text, View } from 'react-native';
 
 import { AsyncContent } from '@/components/AsyncContent';
@@ -5,7 +6,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { LoadingState } from '@/components/LoadingState';
 import { Divider } from '@/components/ui/Divider';
 import { colors } from '@/constants/colors';
-import { fetchNotifications } from '@/features/notifications/api';
+import { fetchNotifications, markNotificationsRead } from '@/features/notifications/api';
 import { useApiResource } from '@/hooks/useApiResource';
 import { formatDate } from '@/lib/format';
 import { AppNotification } from '@/types/api';
@@ -33,6 +34,13 @@ function NotificationRow({ notification }: { notification: AppNotification }) {
 
 export default function NotificationsScreen() {
   const { state, refreshing, reload, refresh } = useApiResource(fetchNotifications);
+
+  // Once shown, unread notifications are marked read on the server; this screen keeps its unread dots until refreshed.
+  useEffect(() => {
+    if (state.status !== 'success') return;
+    const unread = state.data.filter((n) => n.readAt === null).map((n) => n.id);
+    if (unread.length > 0) markNotificationsRead(unread).catch(() => undefined);
+  }, [state]);
 
   return (
     <ScrollView
