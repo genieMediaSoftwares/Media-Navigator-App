@@ -83,7 +83,7 @@ function Shortcut({ icon, label, tint, color, onPress }: { icon: IconName; label
 
 /** Platform filter chips; rendered only when more than one platform is connected. */
 function PlatformFilter({ platforms, value, onChange }: { platforms: SocialPlatform[]; value: SocialPlatform | 'all'; onChange: (value: SocialPlatform | 'all') => void }) {
-  const options: Array<{ value: SocialPlatform | 'all'; label: string; icon?: IconName }> = [
+  const options: { value: SocialPlatform | 'all'; label: string; icon?: IconName }[] = [
     { value: 'all', label: 'All' },
     ...platforms.map((id) => ({ value: id, label: platformOption(id).name, icon: platformOption(id).icon })),
   ];

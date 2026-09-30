@@ -1,6 +1,7 @@
 import type { ErrorRequestHandler, RequestHandler } from 'express';
 
 import { HttpError, sendError } from '../lib/http';
+import { redactSecrets } from '../lib/redact';
 
 /** JSON 404 for unknown paths; 405 with Allow when the path exists under another method. */
 export function notFoundHandler(knownPaths: () => Array<{ pattern: RegExp; methods: string[] }>): RequestHandler {
@@ -41,12 +42,13 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
 		return;
 	}
 
-	// Diagnostics only: never request bodies, headers, query strings, passwords or tokens.
+	// Diagnostics only: never request bodies, headers, query strings, passwords or tokens. Messages are
+	// redacted in case an HTTP client error ever echoes a URL that carried a token.
 	console.error('Unhandled error', {
 		method: req.method,
 		path: req.path,
-		error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
-		stack: error instanceof Error ? error.stack : undefined,
+		error: redactSecrets(error instanceof Error ? `${error.name}: ${error.message}` : String(error)),
+		stack: error instanceof Error && error.stack ? redactSecrets(error.stack, 2000) : undefined,
 	});
 	sendError(res, new HttpError(500, 'INTERNAL_ERROR', 'Something went wrong. Please try again.'));
 };

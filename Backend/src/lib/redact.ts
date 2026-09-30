@@ -7,6 +7,6 @@ const PATTERNS: Array<[RegExp, string]> = [
 	[/mongodb(\+srv)?:\/\/[^\s"']+/gi, 'mongodb://[redacted]'],
 ];
 
-export function redactSecrets(text: string): string {
-	return PATTERNS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), text).slice(0, 500);
+export function redactSecrets(text: string, maxLength = 500): string {
+	return PATTERNS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), text).slice(0, maxLength);
 }

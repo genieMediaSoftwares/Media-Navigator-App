@@ -1,5 +1,13 @@
 # Media Navigator — Project Setup
 
+> **Backend architecture changed (September 30, 2026).** The Cloudflare Worker (D1 + KV) backend was
+> migrated to **Node.js + Express + MongoDB + Cloudflare R2**, deployable to Render. The current
+> backend setup, environment variables, local development and deployment steps are in
+> [`Backend/README.md`](Backend/README.md); the migration inventory and results are in
+> [`Backend/docs/MIGRATION_REPORT.md`](Backend/docs/MIGRATION_REPORT.md). Sections below that mention
+> Wrangler, D1, KV, `.dev.vars` or `wrangler secret` describe the pre-migration Worker and are kept as
+> history. API paths and response formats did not change.
+
 Media Navigator is a mobile app for social media intelligence and performance management.
 
 - **Milestone 1 (done):** project foundation.

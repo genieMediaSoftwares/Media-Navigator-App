@@ -116,3 +116,131 @@ IDs are UUIDv4 strings; timestamps are epoch milliseconds; media `timestamp` is 
 4. Keep PBKDF2 hashes verifiable (new hashes use a higher iteration count; the format is self-describing).
 5. Keep the credential encryption scheme so the migrated Meta credential decrypts with the existing key.
 6. Migrate D1 rows and live KV entries with an idempotent script, verify counts, then remove Worker code.
+
+---
+
+## Part 2 — Migration result (September 30, 2026)
+
+### New architecture
+
+| Layer | Implementation |
+| --- | --- |
+| HTTP | Express 5 (`src/app.ts`), Helmet, CORS allow-list (no credentials), per-IP rate limits (API 300/min, auth 30/15 min), 16 KB JSON limit, JSON 404/405 |
+| Config | `src/config/env.ts` (Zod). Production refuses a localhost/LAN `MONGODB_URI` or an `ENCRYPTION_KEY` shorter than 32 characters |
+| Data | Mongoose models in `src/models`, repositories in `src/db` returning the same row shapes the services used before |
+| Credentials | AES-256-GCM, key = SHA-256(`ENCRYPTION_KEY`), identical to the Worker, so the migrated credential decrypts unchanged |
+| Providers | `src/services/providers`: Instagram (original sync), Facebook Pages, YouTube, LinkedIn |
+| Files | Cloudflare R2 via `@aws-sdk/client-s3` (`region: auto`), metadata in `files` |
+| Server | `src/server.ts` listens on `0.0.0.0:$PORT` (default 8787), graceful SIGTERM shutdown |
+
+### MongoDB collections
+
+`users`, `profiles`, `sessions`, `connected_accounts`, `platform_credentials`, `content_items`,
+`account_insights`, `sync_runs`, `ai_cache` (TTL), `ai_questions`, `ai_usage` (TTL), `oauth_states` (TTL),
+`pending_connections` (TTL), `notifications`, `files`.
+
+Indexes include `users.email` (unique), `sessions.tokenHash` (unique), `sessions.userId`,
+`sessions.expiresAt` (TTL, 7-day grace), `connected_accounts (userId, platform, platformAccountId)` (unique),
+`connected_accounts (platform, platformAccountId)`, `connected_accounts.tokenReference` (unique),
+`content_items (connectedAccountId, platformContentId)` (unique) and `content_items (connectedAccountId, publishedAt)`.
+
+### D1/KV → MongoDB migration (local data, `npm run migrate:d1`)
+
+Backup: `.migration-backups/2026-09-30T05-32-32-435Z/` (raw `.wrangler/state` + JSON export, gitignored).
+
+| Data | D1/KV | MongoDB | Notes |
+| --- | --- | --- | --- |
+| users | 1 | 1 | |
+| profiles | 1 | 1 | |
+| sessions | 2 | 1 | 1 active session migrated; 1 revoked/expired session intentionally skipped |
+| connected accounts | 1 | 1 | Instagram `@svnbayparck` |
+| platform credentials (KV) | 1 | 1 | decrypts with the existing `ENCRYPTION_KEY` |
+| Instagram media → `content_items` | 201 | 201 | 201/201 field-identical; null metrics kept null |
+| Instagram insights → `account_insights` | 3 | 3 | |
+| sync runs | 5 | 5 | |
+| AI cache (KV) | 3 | 3 | real Gemini results, still within their TTL |
+| Ask history (KV) | 0 | 0 | none existed |
+| OAuth states / rate counters (KV) | 5 | — | temporary and expired, not migrated |
+
+Analytics parity: the baseline computed from D1 rows equals the one computed from MongoDB rows
+(mean 594.35, median 8, n = 201). A second run inserted nothing and skipped everything (idempotent).
+
+### Live verification after the cut-over (Node server on :8787, real data)
+
+* `/health` → `{ status: ok, database: connected }`.
+* Every read endpoint returned 200 with the migrated data (Home: 5,035 followers, 0.66% engagement over
+  the latest 50; Intelligence: 201 posts, 66 reels, timing sufficient). No response contained a token,
+  credential reference or key.
+* **Real Meta sync** through the new server: 200 items and 3 profile metrics in about 31 s; view counts updated.
+* **Real Gemini (`gemini-3.5-flash`)**: executive insights (4), top-post diagnosis, Needs Attention
+  diagnosis and Ask Media Navigator all returned 200 (9–22 s each). The verification question was
+  removed from the Ask history afterwards.
+* Notifications created by those real events: "Instagram sync completed", "New AI insights are ready".
+
+### Endpoint matrix
+
+| Endpoint | Method | Auth | Request | Response `data` | Collections | External | Verified |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `/health` | GET | no | — | `status, database` | ping | — | tests + live |
+| `/api/auth/signup` | POST | no | `email, password, displayName` | `user, session` | users, profiles, sessions | — | tests |
+| `/api/auth/login` | POST | no | `email, password` | `user, session` | users, sessions | — | tests |
+| `/api/auth/logout` | POST | yes | — | `null` | sessions | — | tests |
+| `/api/auth/me` | GET | yes | — | `user` | users, profiles | — | tests + live |
+| `/api/auth/forgot-password` | POST | no | `email` | 501 (no email provider) | — | — | tests |
+| `/api/auth/sessions` | GET | yes | — | `activeSessions` | sessions | — | tests |
+| `/api/auth/change-password` | POST | yes | `currentPassword, newPassword` | `otherSessionsRevoked` | users, sessions | — | tests |
+| `/api/auth/logout-others` | POST | yes | — | `otherSessionsRevoked` | sessions | — | tests |
+| `/api/auth/delete-account` | POST | yes | `password` | `deleted` | all user data (+ R2) | R2 | tests |
+| `/api/overview` | GET | yes | — | `accounts, heroSignal, channels, insights` | accounts, content, insights | — | tests + live |
+| `/api/accounts` | GET | yes | — | `accounts` | connected_accounts | — | tests + live |
+| `/api/accounts/connect` | POST | yes | `platform, accessToken?` | `account` / `selection` / `authorizationUrl` | accounts, credentials | Meta | tests (Meta mocked) |
+| `/api/accounts/connect/:platform` | GET | yes | `returnUrl?` | `authorizationUrl` | oauth_states | — | tests |
+| `/api/accounts/callback/:platform` | GET | no (state) | `code, state` | 302 to the app deep link | oauth_states, accounts, credentials | Meta / Google / LinkedIn | tests (mocked) |
+| `/api/accounts/pending/:id` | GET | yes | — | `selection` | pending_connections | — | tests |
+| `/api/accounts/pending/:id/select` | POST | yes | `platformAccountId` | `account` | pending_connections, accounts | platform | tests (mocked) |
+| `/api/accounts/:id` | DELETE | yes | — | `message` | accounts + cascade | — | tests |
+| `/api/accounts/:id/sync` | POST | yes | — | `accountId, postsSynced, metricsSynced, lastSyncedAt` | content, insights, sync_runs, notifications | platform | tests + **live Meta** |
+| `/api/accounts/:id/dashboard` | GET | yes | — | `account, metrics, posts (latest 50), lastSyncRun` | accounts, content, insights | — | tests + live |
+| `/api/intelligence/overview` | GET | yes | `accountId?, tz?` | `accounts, overview` | content, insights, sync_runs | — | tests + live |
+| `/api/intelligence/insights` | GET | yes | `accountId?, tz?` | `insights, generatedAt` | ai_cache, ai_usage | Gemini | tests + **live Gemini** |
+| `/api/intelligence/media` | GET | yes | `accountId, q, format, sort, period, performance, limit, offset` | `items, total, nextOffset` | content | — | tests + live |
+| `/api/intelligence/media/:id` | GET | yes | `accountId?, tz?` | post detail | content | — | tests + live |
+| `/api/intelligence/media/:id/analysis` | GET | yes | `accountId?, tz?` | post analysis | ai_cache | Gemini | tests + **live Gemini** |
+| `/api/intelligence/ask` | GET | yes | `accountId?` | `history, aiConfigured` | ai_questions | — | tests + live |
+| `/api/intelligence/ask` | POST | yes | `question, accountId?, tz?` | answer | ai_questions, ai_usage | Gemini | tests + **live Gemini** |
+| `/api/planner/insights` | GET | yes | `tz?, accountId?` | timing + `account, accounts, scheduling` | content | — | tests + live |
+| `/api/notifications` | GET | yes | — | `notifications, unreadCount` | notifications | — | tests + live |
+| `/api/notifications/read` | POST | yes | `ids?` | `updated` | notifications | — | tests |
+| `/api/profile` | PATCH | yes | `displayName` | `user` | profiles | — | tests |
+| `/api/profile/preferences` | GET / PATCH | yes | preference fields | `preferences` | users | — | tests |
+| `/api/profile/avatar/upload-url` | POST | yes | `mimeType, size` | presigned PUT | files | R2 | tests (stand-in client) |
+| `/api/profile/avatar/confirm` | POST | yes | `fileId` | `avatarKey, user` | files, profiles | R2 | tests (stand-in client) |
+| `/api/profile/avatar` | GET / DELETE | yes | — | `url` / `user` | profiles, files | R2 | tests |
+
+All pre-existing paths, methods and response shapes are unchanged. Existing responses only gained new
+optional fields (`insights[].platform/accountId`, planner `account/accounts/scheduling`, notifications
+`unreadCount`).
+
+### Status by area
+
+| Area | Status |
+| --- | --- |
+| Instagram | Working against the real account through the new backend (sync verified live). |
+| Facebook Pages | Implemented (OAuth and manual Meta token, Page selection, posts, reactions/comments/shares, reach where Meta returns it). **Not tested against the live API**: no Meta app credentials are configured. |
+| YouTube | Implemented (Google OAuth with PKCE, refresh tokens, channel selection, videos, views/likes/comments, watch time via YouTube Analytics). **Not tested against the live API**: no Google OAuth client is configured. |
+| LinkedIn | Implemented (organization ACLs, posts, reactions/comments, share statistics). **Not tested against the live API**: needs an app approved for the Community Management API. |
+| R2 | Implemented (presigned upload/download, verify-on-confirm, delete). **Not tested against a real bucket**: no R2 credentials are configured, so upload endpoints answer 503 until they are. |
+| Render | `render.yaml` and the production build/start verified locally. **Not deployed.** Production needs a remotely reachable MongoDB (for example Atlas). |
+
+### Remaining limitations
+
+* Home has an "All" / per-platform filter, but Intelligence and Planner analyze one account at a time
+  (account switcher); metrics from different platforms are not merged into one baseline.
+* OAuth flows need HTTPS callback URLs registered with each platform, so they can only be exercised on a
+  deployed backend or through an HTTPS tunnel.
+* YouTube Shorts are stored as `VIDEO` (the Data API has no reliable Shorts flag). LinkedIn post
+  thumbnails are not resolved (image URNs need an extra API call).
+* Rate limiting uses in-memory counters per instance; running several instances would need a shared store.
+* Password reset still needs an email provider (the endpoint answers 501 truthfully).
+* The mobile app has no avatar-upload UI yet (the backend is ready; it needs an image picker and R2 credentials).
+* The Privacy Policy and Terms texts describe the actual data handling but have not been legally reviewed.

@@ -1,62 +1,25 @@
-# Cloudflare Workers
+# Media Navigator API — agent notes
 
-STOP. Your knowledge of Cloudflare Workers APIs and limits may be outdated. Always retrieve current documentation before any Workers, KV, R2, D1, Durable Objects, Queues, Vectorize, AI, or Agents SDK task.
-
-## Docs
-
-- https://developers.cloudflare.com/workers/
-- MCP: `https://docs.mcp.cloudflare.com/mcp`
-
-For all limits and quotas, retrieve from the product's `/platform/limits/` page. eg. `/workers/platform/limits`
+Node.js 24 + TypeScript + Express 5 + Mongoose 9 (MongoDB). Deployed to Render; files in Cloudflare R2
+through its S3 API. Read `README.md` for setup and `docs/MIGRATION_REPORT.md` for history.
 
 ## Commands
 
 | Command | Purpose |
 |---------|---------|
-| `npx wrangler dev` | Local development |
-| `npx wrangler deploy` | Deploy to Cloudflare |
-| `npx wrangler types` | Generate TypeScript types |
+| `npm run dev` | Local server with reload on http://0.0.0.0:8787 (reads `.env`) |
+| `npm run typecheck` | Type-check `src/`, `scripts/` and `tests/` |
+| `npm test` | Vitest + supertest against the local MongoDB (throwaway database per test file) |
+| `npm run build` / `npm start` | Production build to `dist/` and start (Render) |
+| `npm run migrate:d1` | One-time, idempotent import of the old Worker's local D1/KV state |
 
-Run `wrangler types` after changing bindings in wrangler.jsonc.
+Run typecheck and tests before declaring a task done.
 
-## Local Explorer (Debugging & Inspection)
+## Rules
 
-When running `npx wrangler dev`, a Local Explorer API is available for inspecting and debugging local Workers, bindings, and storage state. The API base URL is printed in the terminal when the dev server starts.
-
-Key endpoints (relative to the dev server URL):
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /cdn-cgi/local/explorer/api/local/workers` | List local Workers and their bindings |
-| `GET /cdn-cgi/local/explorer/api/storage/kv/namespaces` | List KV namespaces |
-| `GET /cdn-cgi/local/explorer/api/d1/database` | List D1 databases |
-| `GET /cdn-cgi/local/explorer/api/r2/buckets` | List R2 buckets |
-| `GET /cdn-cgi/local/explorer/api/workers/durable_objects/namespaces` | List Durable Object namespaces |
-| `GET /cdn-cgi/local/explorer/api/workflows` | List Workflows |
-| `POST /cdn-cgi/local/explorer/api/local/observability/query` | Run a read-only SQL query (SELECT/WITH only) over captured request traces and console logs. Tables: `spans`, `logs` (read attributes via `json(attributes)`). Example: `curl -X POST <base>/cdn-cgi/local/explorer/api/local/observability/query -H 'Content-Type: application/json' -d '{"sql":"SELECT service, name, outcome, duration_ms FROM spans WHERE parent_id IS NULL LIMIT 20"}'` |
-| `POST /cdn-cgi/local/explorer/api/local/observability/clear` | Clear all captured traces and logs |
-
-If the routes above don't cover what you need, fetch the full OpenAPI schema (large - use only as a last resort): `GET /cdn-cgi/local/explorer/api`
-
-Use the Local Explorer to debug issues by inspecting storage state (KV keys, D1 rows, R2 objects, DO storage), viewing Worker bindings, and querying request traces and logs captured during the dev session.
-
-## Node.js Compatibility
-
-https://developers.cloudflare.com/workers/runtime-apis/nodejs/
-
-## Errors
-
-- **Error 1102** (CPU/Memory exceeded): Retrieve limits from `/workers/platform/limits/`
-- **All errors**: https://developers.cloudflare.com/workers/observability/errors/
-
-## Product Docs
-
-Retrieve API references and limits from:
-`/kv/` · `/r2/` · `/d1/` · `/durable-objects/` · `/queues/` · `/vectorize/` · `/workers-ai/` · `/agents/`
-
-## Best Practices (conditional)
-
-If the application uses Durable Objects or Workflows, refer to the relevant best practices:
-
-- Durable Objects: https://developers.cloudflare.com/durable-objects/best-practices/rules-of-durable-objects/
-- Workflows: https://developers.cloudflare.com/workflows/build/rules-of-workflows/
+- Keep the response envelope `{ success, data }` / `{ success, error: { code, message, fields? } }` and existing paths: the mobile app depends on them.
+- Never return, log, or send to Gemini: passwords, password hashes, session tokens, platform access/refresh tokens, `ENCRYPTION_KEY`, `MONGODB_URI`, R2 or Gemini keys. Platform tokens are stored only through `services/credentials.ts` (AES-256-GCM).
+- A metric a platform did not return is `null`, never `0`. Never invent metrics, seed data or demo accounts.
+- Every query on user data must be scoped to the authenticated user (`requireOwnedAccount`, `userId` filters).
+- 401 means "session invalid" to the app (it signs out). Use 403 for a wrong password on an authenticated request.
+- Platform adapters live in `src/services/providers/` and must use official, documented APIs. Check the platform's current docs before changing request shapes; do not rely on memory.

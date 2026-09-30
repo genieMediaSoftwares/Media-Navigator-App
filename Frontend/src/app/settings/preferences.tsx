@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, ScrollView, Switch, Text, View } from 'react-native';
 
 import { ErrorState } from '@/components/ErrorState';
@@ -16,7 +16,7 @@ import { UserPreferences } from '@/types/api';
 
 type Toggle = 'notifySyncResults' | 'notifyAiInsights' | 'notifyConnectionIssues';
 
-const TOGGLES: Array<{ key: Toggle; label: string; description: string }> = [
+const TOGGLES: { key: Toggle; label: string; description: string }[] = [
   { key: 'notifySyncResults', label: 'Sync results', description: 'When a sync finishes or fails.' },
   { key: 'notifyConnectionIssues', label: 'Connection problems', description: 'When a connected account needs to be reconnected.' },
   { key: 'notifyAiInsights', label: 'Insights', description: 'New AI insights and posts performing far above your average.' },
@@ -25,14 +25,12 @@ const TOGGLES: Array<{ key: Toggle; label: string; description: string }> = [
 export default function PreferencesScreen() {
   const { state: auth, updateUser } = useAuth();
   const { state, reload } = useApiResource(fetchPreferences);
-  const [preferences, setPreferences] = useState<UserPreferences | null>(null);
+  // Server values, overridden by the latest saved (or optimistically toggled) copy.
+  const [saved, setSaved] = useState<UserPreferences | null>(null);
+  const preferences = saved ?? (state.status === 'success' ? state.data : null);
   const [name, setName] = useState(auth.status === 'authenticated' ? (auth.user.profile?.displayName ?? '') : '');
   const [nameError, setNameError] = useState<string | null>(null);
   const [savingName, setSavingName] = useState(false);
-
-  useEffect(() => {
-    if (state.status === 'success') setPreferences(state.data);
-  }, [state]);
 
   const saveName = async () => {
     const error = validateDisplayName(name);
@@ -52,11 +50,11 @@ export default function PreferencesScreen() {
   const toggle = async (key: Toggle, value: boolean) => {
     if (!preferences) return;
     const previous = preferences;
-    setPreferences({ ...preferences, [key]: value });
+    setSaved({ ...preferences, [key]: value });
     try {
-      setPreferences(await updatePreferences({ [key]: value }));
+      setSaved(await updatePreferences({ [key]: value }));
     } catch (err) {
-      setPreferences(previous);
+      setSaved(previous);
       Alert.alert('Unable to save', err instanceof Error ? err.message : 'Please try again.');
     }
   };
