@@ -1,4 +1,4 @@
-import { InstagramMediaRow } from '../db/instagramData';
+import type { ContentRow } from '../db/content';
 
 // Deterministic analytics over synced Instagram data. Nothing here calls Meta or Gemini and
 // nothing is estimated: every number is computed from stored rows, and a metric that was not
@@ -6,7 +6,7 @@ import { InstagramMediaRow } from '../db/instagramData';
 
 export type ContentFormat = 'REEL' | 'POST' | 'CAROUSEL' | 'VIDEO' | 'STORY';
 
-/** Mirrors MEDIA_FORMAT_SQL in db/instagramData.ts. */
+/** Instagram format from Meta media fields; stored on each content item at sync time. */
 export function classifyFormat(mediaType: string | null, mediaProductType: string | null): ContentFormat {
 	if (mediaProductType === 'REELS') return 'REEL';
 	if (mediaProductType === 'STORY') return 'STORY';
@@ -31,6 +31,14 @@ export const METRIC_DEFINITIONS = {
 	needsAttention:
 		'Posts older than 3 days whose interactions are below the account average. Newer posts are excluded because they are still accumulating engagement.',
 } as const;
+
+export type MetricDefinitions = { [K in keyof typeof METRIC_DEFINITIONS]: string };
+
+/** The definitions worded for the account's platform (they are written for Instagram). */
+export function metricDefinitionsFor(platformName: string): MetricDefinitions {
+	const entries = Object.entries(METRIC_DEFINITIONS).map(([key, text]) => [key, text.replaceAll('Instagram', platformName)]);
+	return Object.fromEntries(entries) as MetricDefinitions;
+}
 
 /** Minimum posts with interaction data before top/bottom rankings are shown. */
 export const MIN_POSTS_FOR_RANKING = 6;
@@ -87,8 +95,8 @@ export function interactionsOf(likes: number | null, comments: number | null): n
 	return (likes ?? 0) + (comments ?? 0);
 }
 
-export function toIntelligencePost(row: InstagramMediaRow, followers: number | null, baseline: number | null): IntelligencePost {
-	const format = classifyFormat(row.media_type, row.media_product_type);
+export function toIntelligencePost(row: ContentRow, followers: number | null, baseline: number | null): IntelligencePost {
+	const format = row.format;
 	const interactions = interactionsOf(row.like_count, row.comments_count);
 	const isVideo = format === 'REEL' || format === 'VIDEO' || row.media_type === 'VIDEO';
 	return {
@@ -97,7 +105,7 @@ export function toIntelligencePost(row: InstagramMediaRow, followers: number | n
 		caption: row.caption,
 		permalink: row.permalink,
 		previewUrl: (isVideo ? row.thumbnail_url : row.media_url) ?? row.thumbnail_url ?? null,
-		publishedAt: normalizeTimestamp(row.timestamp),
+		publishedAt: row.published_at ?? normalizeTimestamp(row.timestamp),
 		metrics: {
 			views: row.views,
 			reach: row.reach,
@@ -128,7 +136,7 @@ export interface Baseline {
 	sampleSize: number;
 }
 
-export function computeBaseline(rows: InstagramMediaRow[]): Baseline {
+export function computeBaseline(rows: ContentRow[]): Baseline {
 	const values = rows.map((r) => interactionsOf(r.like_count, r.comments_count)).filter((v): v is number => v !== null);
 	const { value, sampleSize } = average(values);
 	const sorted = [...values].sort((a, b) => a - b);

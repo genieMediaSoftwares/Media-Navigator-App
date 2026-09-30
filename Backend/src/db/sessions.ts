@@ -1,13 +1,14 @@
 import { randomBytes, sha256Hex, toBase64Url } from '../lib/crypto';
+import { Session, User } from '../models';
 
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const SESSION_TOKEN_BYTES = 32;
 
 export interface IssuedSession {
+	id: string;
 	/** Plaintext token for the client. Returned once and never stored. */
 	token: string;
 	expiresAt: number;
-	statement: D1PreparedStatement;
 }
 
 export interface SessionLookup {
@@ -23,33 +24,53 @@ export function hashSessionToken(token: string): Promise<string> {
 	return sha256Hex(token);
 }
 
-/** Generates a new random token and the statement that stores its hash. Nothing is written until it runs. */
-export async function issueSession(db: D1Database, userId: string, now: number): Promise<IssuedSession> {
+/** Generates a new random token and stores only its SHA-256 hash. */
+export async function issueSession(userId: string, now: number): Promise<IssuedSession> {
 	const token = toBase64Url(randomBytes(SESSION_TOKEN_BYTES));
 	const expiresAt = now + SESSION_TTL_MS;
-	const statement = db
-		.prepare(
-			'INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at, last_used_at, revoked_at) VALUES (?, ?, ?, ?, ?, ?, NULL)',
-		)
-		.bind(crypto.randomUUID(), userId, await hashSessionToken(token), expiresAt, now, now);
-	return { token, expiresAt, statement };
+	const session = await Session.create({
+		userId,
+		tokenHash: await hashSessionToken(token),
+		expiresAt: new Date(expiresAt),
+		createdAt: new Date(now),
+		lastUsedAt: new Date(now),
+		revokedAt: null,
+	});
+	return { id: session._id, token, expiresAt };
 }
 
-export function findSessionByTokenHash(db: D1Database, tokenHash: string): Promise<SessionLookup | null> {
-	return db
-		.prepare(
-			`SELECT s.id, s.user_id, u.email, s.expires_at, s.last_used_at, s.revoked_at
-			 FROM sessions s JOIN users u ON u.id = s.user_id
-			 WHERE s.token_hash = ?`,
-		)
-		.bind(tokenHash)
-		.first<SessionLookup>();
+export async function findSessionByTokenHash(tokenHash: string): Promise<SessionLookup | null> {
+	const session = await Session.findOne({ tokenHash }).lean();
+	if (!session) return null;
+	const user = await User.findById(session.userId, { email: 1 }).lean();
+	if (!user) return null;
+	return {
+		id: session._id,
+		user_id: session.userId,
+		email: user.email,
+		expires_at: session.expiresAt.getTime(),
+		last_used_at: session.lastUsedAt.getTime(),
+		revoked_at: session.revokedAt ? session.revokedAt.getTime() : null,
+	};
 }
 
-export async function touchSession(db: D1Database, sessionId: string, now: number): Promise<void> {
-	await db.prepare('UPDATE sessions SET last_used_at = ? WHERE id = ?').bind(now, sessionId).run();
+export async function touchSession(sessionId: string, now: number): Promise<void> {
+	await Session.updateOne({ _id: sessionId }, { $set: { lastUsedAt: new Date(now) } });
 }
 
-export async function revokeSession(db: D1Database, sessionId: string, now: number): Promise<void> {
-	await db.prepare('UPDATE sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').bind(now, sessionId).run();
+export async function revokeSession(sessionId: string, now: number): Promise<void> {
+	await Session.updateOne({ _id: sessionId, revokedAt: null }, { $set: { revokedAt: new Date(now) } });
+}
+
+/** Revokes every active session of the user except `keepSessionId`. Returns how many were revoked. */
+export async function revokeOtherSessions(userId: string, keepSessionId: string | null, now: number): Promise<number> {
+	const result = await Session.updateMany(
+		{ userId, revokedAt: null, ...(keepSessionId && { _id: { $ne: keepSessionId } }) },
+		{ $set: { revokedAt: new Date(now) } },
+	);
+	return result.modifiedCount;
+}
+
+export async function countActiveSessions(userId: string, now: number): Promise<number> {
+	return Session.countDocuments({ userId, revokedAt: null, expiresAt: { $gt: new Date(now) } });
 }

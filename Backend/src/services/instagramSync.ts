@@ -1,16 +1,19 @@
-import { findAccountById, updateAccountStatusAndSynced } from '../db/accounts';
+import { ConnectedAccountRow, findAccountById, updateAccountStatusAndSynced } from '../db/accounts';
 import {
-	buildUpsertInstagramMediaStatement,
+	ContentInput,
 	createSyncRun,
-	getInstagramInsightsByAccountId,
-	getInstagramMediaByAccountId,
-	getLastSyncRunByAccountId,
+	getAccountInsights,
+	getContentByAccountId,
+	getLastSyncRun,
 	updateSyncRun,
-	upsertInstagramInsight,
-} from '../db/instagramData';
+	upsertAccountInsight,
+	upsertContentItems,
+} from '../db/content';
 import { HttpError } from '../lib/http';
+import { redactSecrets } from '../lib/redact';
 import { getPlatformCredentials } from './credentials';
 import { getMetaApiVersion } from './instagram';
+import { classifyFormat, normalizeTimestamp } from './intelligence';
 
 export interface SyncSummary {
 	accountId: string;
@@ -22,7 +25,7 @@ export interface SyncSummary {
 export interface InstagramDashboardResponse {
 	account: {
 		id: string;
-		platform: 'instagram';
+		platform: ConnectedAccountRow['platform'];
 		handle: string;
 		displayName: string | null;
 		profilePictureUrl: string | null;
@@ -74,7 +77,7 @@ const MEDIA_FIELDS_FALLBACK = 'id,caption,media_type,media_url,thumbnail_url,per
  * Media insight metric sets, richest first. Meta rejects the whole request if any metric is not
  * supported for the Graph API version or for one media item in the page, so sync steps down
  * through these sets and finally requests the page without insights. Metrics that are not
- * returned are stored as NULL ("not available"), never as zero.
+ * returned are stored as null ("not available"), never as zero.
  */
 const MEDIA_INSIGHT_METRIC_SETS: readonly string[][] = [
 	['views', 'reach', 'saved', 'shares', 'total_interactions'],
@@ -112,11 +115,7 @@ function mediaFieldsForTier(tier: number): string {
  * Requests one media page starting at `startTier` and stepping down on failure. Returns the
  * tier that succeeded so later pages start there, or null if even the plain request failed.
  */
-async function fetchMediaPage(
-	url: string,
-	startTier: number,
-	fetchImpl: typeof fetch,
-): Promise<{ data: MediaPageResponse; tier: number } | null> {
+async function fetchMediaPage(url: string, startTier: number, fetchImpl: typeof fetch): Promise<{ data: MediaPageResponse; tier: number } | null> {
 	for (let tier = startTier; tier <= MEDIA_INSIGHT_METRIC_SETS.length; tier++) {
 		const pageUrl = new URL(url);
 		pageUrl.searchParams.set('fields', mediaFieldsForTier(tier));
@@ -145,53 +144,64 @@ function parseMediaInsights(field: MediaInsightsField | undefined) {
 	return {
 		views: values.get('views') ?? null,
 		reach: values.get('reach') ?? null,
-		saved: values.get('saved') ?? null,
+		saves: values.get('saved') ?? null,
 		shares: values.get('shares') ?? null,
 		totalInteractions: values.get('total_interactions') ?? null,
 	};
 }
 
+type MediaItem = NonNullable<MediaPageResponse['data']>[number];
+
+export function toContentInput(item: MediaItem): ContentInput {
+	return {
+		platformContentId: item.id,
+		format: classifyFormat(item.media_type ?? null, item.media_product_type ?? null),
+		mediaType: item.media_type ?? null,
+		mediaProductType: item.media_product_type ?? null,
+		caption: item.caption ?? null,
+		permalink: item.permalink ?? null,
+		mediaUrl: item.media_url ?? null,
+		thumbnailUrl: item.thumbnail_url ?? null,
+		timestampRaw: item.timestamp ?? null,
+		publishedAt: toDate(normalizeTimestamp(item.timestamp ?? null)),
+		counts: { likes: item.like_count ?? null, comments: item.comments_count ?? null },
+		insights: parseMediaInsights(item.insights),
+	};
+}
+
+function toDate(iso: string | null): Date | null {
+	return iso ? new Date(iso) : null;
+}
+
 export async function syncInstagramAccount(
-	env: Env,
-	userId: string,
-	accountId: string,
+	account: ConnectedAccountRow,
 	now = Date.now(),
 	fetchImpl: typeof fetch = fetch,
 ): Promise<SyncSummary> {
-	const account = await findAccountById(env.DB, accountId);
-	if (!account || account.user_id !== userId) {
-		throw new HttpError(404, 'ACCOUNT_NOT_FOUND', 'Connected account not found.');
-	}
+	const accountId = account.id;
+	const userId = account.user_id;
 
-	if (account.platform !== 'instagram') {
-		throw new HttpError(400, 'INVALID_PLATFORM', 'Only Instagram sync is currently supported.');
-	}
-
-	// 1. Retrieve credentials from KV server-side
-	const credentials = await getPlatformCredentials(env, userId, account.token_reference);
-	if (!credentials || !credentials.accessToken) {
-		await updateAccountStatusAndSynced(env.DB, accountId, 'reauthorization_required', now, now);
-		throw new HttpError(
-			400,
-			'REAUTHORIZATION_REQUIRED',
-			'Access token expired or revoked. Please reconnect your Instagram account.',
-		);
+	// 1. Credentials are decrypted server-side only.
+	const credentials = await getPlatformCredentials(userId, account.token_reference);
+	if (!credentials?.accessToken) {
+		await updateAccountStatusAndSynced(accountId, 'reauthorization_required', null, now);
+		throw new HttpError(400, 'REAUTHORIZATION_REQUIRED', 'Access token expired or revoked. Please reconnect your Instagram account.');
 	}
 
 	const accessToken = credentials.accessToken;
-	const version = getMetaApiVersion(env);
-	const syncRunId = await createSyncRun(env.DB, accountId, now);
+	const version = getMetaApiVersion();
+	const syncRunId = await createSyncRun(accountId, now);
 
 	let postsSynced = 0;
 	let metricsSynced = 0;
 
 	try {
-		// 2. Fetch Profile Info & Profile Insights
+		// 2. Profile fields
 		let profileUrl = `https://graph.facebook.com/${version}/${account.platform_account_id}?fields=id,username,name,profile_picture_url,followers_count,follows_count,media_count&access_token=${encodeURIComponent(accessToken)}`;
 		let profileRes = await fetchImpl(profileUrl);
 
 		if (!profileRes.ok) {
-			// Try fallback Instagram Display API / Graph API /me
+			// Instagram API with Instagram Login
 			profileUrl = `https://graph.instagram.com/${version}/me?fields=id,username,name,account_type,media_count&access_token=${encodeURIComponent(accessToken)}`;
 			profileRes = await fetchImpl(profileUrl);
 		}
@@ -208,119 +218,66 @@ export async function syncInstagramAccount(
 		};
 
 		if (!profileRes.ok || profileData.error) {
-			const isTokenError =
-				profileData.error?.code === 190 ||
-				profileRes.status === 400 ||
-				profileRes.status === 401;
-
+			const isTokenError = profileData.error?.code === 190 || profileRes.status === 400 || profileRes.status === 401;
 			if (isTokenError) {
-				await updateAccountStatusAndSynced(env.DB, accountId, 'reauthorization_required', now, now);
-				await updateSyncRun(env.DB, syncRunId, 'failed', 0, now, {
-					code: 'INVALID_TOKEN',
-					message: 'Meta access token expired or revoked.',
-				});
-				throw new HttpError(
-					400,
-					'INVALID_TOKEN',
-					'Meta rejected this access token. Check the token and required permissions, then try again.',
-				);
+				await updateAccountStatusAndSynced(accountId, 'reauthorization_required', null, now);
+				await updateSyncRun(syncRunId, 'failed', 0, now, { code: 'INVALID_TOKEN', message: 'Meta access token expired or revoked.' });
+				throw new HttpError(400, 'INVALID_TOKEN', 'Meta rejected this access token. Check the token and required permissions, then try again.');
 			}
-
 			const msg = profileData.error?.message ?? 'Failed to fetch Instagram profile data.';
-			await updateSyncRun(env.DB, syncRunId, 'failed', 0, now, { code: 'META_API_ERROR', message: msg });
+			await updateSyncRun(syncRunId, 'failed', 0, now, { code: 'META_API_ERROR', message: msg });
 			throw new HttpError(400, 'META_API_ERROR', msg);
 		}
 
-		// Save profile insights if available
-		if (typeof profileData.followers_count === 'number') {
-			await upsertInstagramInsight(
-				env.DB,
-				accountId,
-				{
-					metricName: 'followers_count',
-					metricValue: profileData.followers_count,
-					providerSource: 'profile',
-				},
-				now,
-			);
-			metricsSynced++;
+		for (const [metricName, value] of [
+			['followers_count', profileData.followers_count],
+			['follows_count', profileData.follows_count],
+			['media_count', profileData.media_count],
+		] as const) {
+			if (typeof value === 'number') {
+				await upsertAccountInsight(accountId, { metricName, metricValue: value, providerSource: 'profile' }, now);
+				metricsSynced++;
+			}
 		}
 
-		if (typeof profileData.follows_count === 'number') {
-			await upsertInstagramInsight(
-				env.DB,
-				accountId,
-				{
-					metricName: 'follows_count',
-					metricValue: profileData.follows_count,
-					providerSource: 'profile',
-				},
-				now,
-			);
-			metricsSynced++;
-		}
-
-		if (typeof profileData.media_count === 'number') {
-			await upsertInstagramInsight(
-				env.DB,
-				accountId,
-				{
-					metricName: 'media_count',
-					metricValue: profileData.media_count,
-					providerSource: 'profile',
-				},
-				now,
-			);
-			metricsSynced++;
-		}
-
-		// Update connected account metadata
-		await updateAccountStatusAndSynced(env.DB, accountId, 'connected', now, now, {
+		await updateAccountStatusAndSynced(accountId, 'connected', now, now, {
 			accountName: profileData.name ?? account.account_name,
 			accountUsername: profileData.username ?? account.account_username,
 			profilePictureUrl: profileData.profile_picture_url ?? account.profile_picture_url,
 		});
 
-		// 3. Fetch Account-level insights if supported (impressions, reach)
+		// 3. Account-level insights where supported (impressions, reach)
 		try {
 			const insightsUrl = `https://graph.facebook.com/${version}/${account.platform_account_id}/insights?metric=impressions,reach&period=day&access_token=${encodeURIComponent(accessToken)}`;
 			const insightsRes = await fetchImpl(insightsUrl);
 			if (insightsRes.ok) {
 				const insightsData = (await insightsRes.json()) as {
-					data?: Array<{
-						name: string;
-						period: string;
-						values: Array<{ value: number; end_time?: string }>;
-					}>;
+					data?: Array<{ name: string; period: string; values: Array<{ value: number; end_time?: string }> }>;
 				};
-
-				if (insightsData.data && Array.isArray(insightsData.data)) {
-					for (const item of insightsData.data) {
-						const lastVal = item.values[item.values.length - 1];
-						if (lastVal && typeof lastVal.value === 'number') {
-							await upsertInstagramInsight(
-								env.DB,
-								accountId,
-								{
-									metricName: item.name,
-									metricValue: lastVal.value,
-									period: item.period,
-									metricDate: lastVal.end_time ?? 'latest',
-									providerSource: 'insights_api',
-								},
-								now,
-							);
-							metricsSynced++;
-						}
+				for (const item of insightsData.data ?? []) {
+					const lastVal = item.values[item.values.length - 1];
+					if (lastVal && typeof lastVal.value === 'number') {
+						await upsertAccountInsight(
+							accountId,
+							{
+								metricName: item.name,
+								metricValue: lastVal.value,
+								period: item.period,
+								metricDate: lastVal.end_time ?? 'latest',
+								providerSource: 'insights_api',
+							},
+							now,
+						);
+						metricsSynced++;
 					}
 				}
 			}
 		} catch {
-			// Account-level insights API may be forbidden or unsupported for this account type; skip gracefully
+			// Account-level insights may be forbidden or unsupported for this account type.
 		}
 
-		// 4. Fetch media with cursor pagination. Per-media insights are requested inline through
-		// field expansion (no extra request per post); see fetchMediaPage for the fallback chain.
+		// 4. Media with cursor pagination. Per-media insights are requested inline through field
+		// expansion (no extra request per post); see fetchMediaPage for the fallback chain.
 		let nextUrl: string | null = `https://graph.facebook.com/${version}/${account.platform_account_id}/media?limit=${MEDIA_PAGE_SIZE}&access_token=${encodeURIComponent(accessToken)}`;
 		let pageCount = 0;
 		let insightTier = 0;
@@ -328,10 +285,12 @@ export async function syncInstagramAccount(
 
 		while (nextUrl && pageCount < MAX_MEDIA_PAGES) {
 			pageCount++;
-			let page: { data: MediaPageResponse; tier: number } | null = usingFallbackApi ? await fetchPlainPage(nextUrl, fetchImpl) : await fetchMediaPage(nextUrl, insightTier, fetchImpl);
+			let page: { data: MediaPageResponse; tier: number } | null = usingFallbackApi
+				? await fetchPlainPage(nextUrl, fetchImpl)
+				: await fetchMediaPage(nextUrl, insightTier, fetchImpl);
 
 			if (!page && pageCount === 1) {
-				// Fallback to the Instagram Login API (graph.instagram.com); its paging URLs are followed as-is.
+				// Instagram Login API (graph.instagram.com); its paging URLs are followed as-is.
 				usingFallbackApi = true;
 				page = await fetchPlainPage(
 					`https://graph.instagram.com/${version}/me/media?fields=${MEDIA_FIELDS_FALLBACK}&limit=${MEDIA_PAGE_SIZE}&access_token=${encodeURIComponent(accessToken)}`,
@@ -342,72 +301,37 @@ export async function syncInstagramAccount(
 			if (!page) break;
 			insightTier = page.tier;
 			const mediaData: MediaPageResponse = page.data;
+			if (!Array.isArray(mediaData.data) || mediaData.data.length === 0) break;
 
-			if (!mediaData.data || !Array.isArray(mediaData.data) || mediaData.data.length === 0) {
-				break;
-			}
-
-			await env.DB.batch(
-				mediaData.data.map((item) =>
-					buildUpsertInstagramMediaStatement(
-						env.DB,
-						accountId,
-						{
-							providerMediaId: item.id,
-							mediaType: item.media_type,
-							mediaProductType: item.media_product_type,
-							caption: item.caption,
-							permalink: item.permalink,
-							mediaUrl: item.media_url,
-							thumbnailUrl: item.thumbnail_url,
-							timestamp: item.timestamp,
-							likeCount: item.like_count,
-							commentsCount: item.comments_count,
-							insights: parseMediaInsights(item.insights),
-						},
-						now,
-					),
-				),
-			);
+			await upsertContentItems(userId, accountId, 'instagram', mediaData.data.map(toContentInput), now);
 			postsSynced += mediaData.data.length;
-
 			nextUrl = mediaData.paging?.next ?? null;
 		}
 
-		await updateSyncRun(env.DB, syncRunId, 'completed', postsSynced, now);
-
-		return {
-			accountId,
-			postsSynced,
-			metricsSynced,
-			lastSyncedAt: new Date(now).toISOString(),
-		};
+		await updateSyncRun(syncRunId, 'completed', postsSynced, now);
+		return { accountId, postsSynced, metricsSynced, lastSyncedAt: new Date(now).toISOString() };
 	} catch (err) {
 		if (err instanceof HttpError) throw err;
-		const msg = err instanceof Error ? err.message : 'Instagram sync failed due to network or server error.';
-		await updateSyncRun(env.DB, syncRunId, 'failed', postsSynced, now, { code: 'SYNC_ERROR', message: msg });
-		throw new HttpError(500, 'SYNC_FAILED', msg);
+		const msg = redactSecrets(err instanceof Error ? err.message : 'Instagram sync failed due to network or server error.');
+		await updateSyncRun(syncRunId, 'failed', postsSynced, now, { code: 'SYNC_ERROR', message: msg });
+		throw new HttpError(500, 'SYNC_FAILED', 'Instagram sync failed due to a network or server error. Please try again.');
 	}
 }
 
-export async function fetchInstagramDashboard(
-	env: Env,
-	userId: string,
-	accountId: string,
-): Promise<InstagramDashboardResponse> {
-	const account = await findAccountById(env.DB, accountId);
+/** Account metrics and the latest 50 posts (the Home / account screen population). */
+export async function fetchAccountDashboard(userId: string, accountId: string): Promise<InstagramDashboardResponse> {
+	const account = await findAccountById(accountId);
 	if (!account || account.user_id !== userId) {
 		throw new HttpError(404, 'ACCOUNT_NOT_FOUND', 'Connected account not found.');
 	}
 
-	const mediaRows = await getInstagramMediaByAccountId(env.DB, accountId);
-	const insightRows = await getInstagramInsightsByAccountId(env.DB, accountId);
-	const lastSyncRunRow = await getLastSyncRunByAccountId(env.DB, accountId);
+	const [mediaRows, insightRows, lastSyncRunRow] = await Promise.all([
+		getContentByAccountId(accountId),
+		getAccountInsights(accountId),
+		getLastSyncRun(accountId),
+	]);
 
-	const getInsightVal = (name: string): number | null => {
-		const match = insightRows.find((i) => i.metric_name === name);
-		return match ? match.metric_value : null;
-	};
+	const getInsightVal = (name: string): number | null => insightRows.find((i) => i.metric_name === name)?.metric_value ?? null;
 
 	const followersCount = getInsightVal('followers_count');
 	const followsCount = getInsightVal('follows_count');
@@ -415,7 +339,6 @@ export async function fetchInstagramDashboard(
 	const reach = getInsightVal('reach');
 	const impressions = getInsightVal('impressions');
 
-	// Calculate engagement rate if total likes + comments and followers exist
 	let totalLikes = 0;
 	let totalComments = 0;
 	let totalEngagedPosts = 0;
@@ -429,22 +352,21 @@ export async function fetchInstagramDashboard(
 		if (likes !== null || comments !== null) totalEngagedPosts++;
 
 		const postEngagements = (likes ?? 0) + (comments ?? 0);
-		const postEngagementRate =
-			followersCount && followersCount > 0 ? Number(((postEngagements / followersCount) * 100).toFixed(2)) : null;
+		const postEngagementRate = followersCount && followersCount > 0 ? Number(((postEngagements / followersCount) * 100).toFixed(2)) : null;
 
 		return {
 			id: row.id,
 			providerMediaId: row.provider_media_id,
 			mediaType: row.media_type,
 			mediaProductType: row.media_product_type,
-			caption: row.caption,
+			caption: row.caption ?? row.title,
 			permalink: row.permalink,
 			mediaUrl: row.media_url,
 			thumbnailUrl: row.thumbnail_url,
 			timestamp: row.timestamp,
 			likeCount: likes,
 			commentsCount: comments,
-			reach: null, // Only set if explicitly returned by Meta
+			reach: null, // Only set if explicitly returned by the platform
 			impressions: null,
 			engagementRate: postEngagementRate,
 		};
@@ -459,7 +381,7 @@ export async function fetchInstagramDashboard(
 	return {
 		account: {
 			id: account.id,
-			platform: 'instagram',
+			platform: account.platform,
 			handle: account.account_username,
 			displayName: account.account_name,
 			profilePictureUrl: account.profile_picture_url ?? null,

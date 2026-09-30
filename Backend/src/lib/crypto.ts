@@ -1,3 +1,8 @@
+import { timingSafeEqual as nodeTimingSafeEqual } from 'node:crypto';
+
+// Web Crypto (globalThis.crypto) is used for hashing and encryption so values produced by the former
+// Cloudflare Worker (password hashes, encrypted credentials, token hashes) stay byte-for-byte compatible.
+
 const encoder = new TextEncoder();
 
 export function randomBytes(length: number): Uint8Array<ArrayBuffer> {
@@ -5,23 +10,22 @@ export function randomBytes(length: number): Uint8Array<ArrayBuffer> {
 }
 
 export function toBase64Url(bytes: Uint8Array): string {
-	let binary = '';
-	for (const byte of bytes) binary += String.fromCharCode(byte);
-	return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+	return Buffer.from(bytes).toString('base64url');
 }
 
 export function fromBase64Url(value: string): Uint8Array<ArrayBuffer> {
-	const base64 = value.replace(/-/g, '+').replace(/_/g, '/');
-	const padding = '='.repeat((4 - (base64.length % 4)) % 4);
-	return Uint8Array.from(atob(base64 + padding), (char) => char.charCodeAt(0));
+	const buffer = Buffer.from(value, 'base64url');
+	const bytes = new Uint8Array(buffer.byteLength);
+	bytes.set(buffer);
+	return bytes;
 }
 
 export async function sha256Hex(value: string): Promise<string> {
 	const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(value)));
-	return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
+	return Buffer.from(digest).toString('hex');
 }
 
-/** Constant-time comparison (Workers-specific extension to Web Crypto). */
+/** Constant-time comparison. */
 export function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
-	return a.byteLength === b.byteLength && crypto.subtle.timingSafeEqual(a, b);
+	return a.byteLength === b.byteLength && nodeTimingSafeEqual(a, b);
 }

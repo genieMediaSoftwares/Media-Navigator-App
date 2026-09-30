@@ -1,5 +1,12 @@
+import { getConfig } from '../config/env';
 import { fromBase64Url, randomBytes, toBase64Url } from '../lib/crypto';
 import { HttpError } from '../lib/http';
+import { PlatformCredential } from '../models';
+
+// Platform tokens are encrypted with AES-256-GCM before they are written to MongoDB. The key is
+// SHA-256(ENCRYPTION_KEY) — the same derivation the former Worker used, so credentials migrated from
+// KV decrypt unchanged. Plaintext tokens never leave the server: they are not returned by the API,
+// not logged, and not included in Gemini prompts.
 
 export interface PlatformCredentials {
 	accessToken: string;
@@ -9,7 +16,7 @@ export interface PlatformCredentials {
 	scope?: string;
 }
 
-interface EncryptedPayload {
+export interface EncryptedPayload {
 	iv: string;
 	ciphertext: string;
 }
@@ -17,86 +24,58 @@ interface EncryptedPayload {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-async function getCryptoKey(encryptionKeySecret: string): Promise<CryptoKey> {
-	if (!encryptionKeySecret || encryptionKeySecret.trim() === '') {
-		throw new HttpError(
-			500,
-			'CONFIG_ERROR',
-			'Server credential encryption is not configured. ENCRYPTION_KEY secret is required.',
-		);
+async function getCryptoKey(): Promise<CryptoKey> {
+	const secret = getConfig().ENCRYPTION_KEY;
+	if (!secret) {
+		throw new HttpError(500, 'CONFIG_ERROR', 'Server credential encryption is not configured. ENCRYPTION_KEY is required.');
 	}
-	const keyBytes = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(encryptionKeySecret)));
+	const keyBytes = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(secret)));
 	return crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
 }
 
-async function encryptPayload(keySecret: string, data: unknown): Promise<EncryptedPayload> {
-	const key = await getCryptoKey(keySecret);
+export async function encryptJson(data: unknown): Promise<EncryptedPayload> {
+	const key = await getCryptoKey();
 	const iv = randomBytes(12);
-	const plaintext = encoder.encode(JSON.stringify(data));
-	const ciphertextBuffer = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext);
-	return {
-		iv: toBase64Url(iv),
-		ciphertext: toBase64Url(new Uint8Array(ciphertextBuffer)),
-	};
+	const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoder.encode(JSON.stringify(data)));
+	return { iv: toBase64Url(iv), ciphertext: toBase64Url(new Uint8Array(ciphertext)) };
 }
 
-async function decryptPayload<T>(keySecret: string, encrypted: EncryptedPayload): Promise<T> {
-	const key = await getCryptoKey(keySecret);
-	const iv = fromBase64Url(encrypted.iv);
-	const ciphertext = fromBase64Url(encrypted.ciphertext);
-	const decryptedBuffer = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
-	return JSON.parse(decoder.decode(decryptedBuffer)) as T;
-}
-
-function credentialKvKey(userId: string, tokenReference: string): string {
-	return `credentials:${userId}:${tokenReference}`;
+export async function decryptJson<T>(encrypted: EncryptedPayload): Promise<T> {
+	const key = await getCryptoKey();
+	const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromBase64Url(encrypted.iv) }, key, fromBase64Url(encrypted.ciphertext));
+	return JSON.parse(decoder.decode(plaintext)) as T;
 }
 
 /**
- * Encrypts and stores platform credentials in Cloudflare KV associated with the authenticated user.
- * Returns a safe, non-sensitive `token_reference` string suitable for storage in D1 `connected_accounts`.
+ * Encrypts and stores platform credentials for the user. Returns a non-secret token reference that
+ * ConnectedAccount stores instead of the token.
  */
-export async function storePlatformCredentials(
-	env: Env,
-	userId: string,
-	credentials: PlatformCredentials,
-): Promise<string> {
+export async function storePlatformCredentials(userId: string, credentials: PlatformCredentials, now = Date.now()): Promise<string> {
 	const tokenReference = `cred_${crypto.randomUUID()}`;
-	const key = credentialKvKey(userId, tokenReference);
-	const encrypted = await encryptPayload(env.ENCRYPTION_KEY, credentials);
-	await env.CACHE.put(key, JSON.stringify(encrypted));
+	const encrypted = await encryptJson(credentials);
+	await PlatformCredential.create({ _id: tokenReference, userId, ...encrypted, createdAt: new Date(now) });
 	return tokenReference;
 }
 
-/**
- * Retrieves and decrypts platform credentials from Cloudflare KV for the specified user and token reference.
- * Returns null if the credential does not exist or does not belong to the user.
- */
-export async function getPlatformCredentials(
-	env: Env,
-	userId: string,
-	tokenReference: string,
-): Promise<PlatformCredentials | null> {
-	const key = credentialKvKey(userId, tokenReference);
-	const raw = await env.CACHE.get(key);
-	if (!raw) return null;
+/** Decrypts the user's credential, or returns null when it is missing, foreign, or undecryptable. */
+export async function getPlatformCredentials(userId: string, tokenReference: string): Promise<PlatformCredentials | null> {
+	const stored = await PlatformCredential.findOne({ _id: tokenReference, userId }).lean();
+	if (!stored) return null;
 	try {
-		const encrypted = JSON.parse(raw) as EncryptedPayload;
-		return await decryptPayload<PlatformCredentials>(env.ENCRYPTION_KEY, encrypted);
-	} catch (error) {
-		console.error('Failed to decrypt platform credentials', { userId, tokenReference });
+		return await decryptJson<PlatformCredentials>({ iv: stored.iv, ciphertext: stored.ciphertext });
+	} catch {
+		console.error('Failed to decrypt platform credentials', { tokenReference });
 		return null;
 	}
 }
 
-/**
- * Permanently deletes stored platform credentials from Cloudflare KV when an account is disconnected.
- */
-export async function deletePlatformCredentials(
-	env: Env,
-	userId: string,
-	tokenReference: string,
-): Promise<void> {
-	const key = credentialKvKey(userId, tokenReference);
-	await env.CACHE.delete(key);
+/** Replaces the stored credential in place (token refresh), keeping the same reference. */
+export async function updatePlatformCredentials(userId: string, tokenReference: string, credentials: PlatformCredentials): Promise<void> {
+	const encrypted = await encryptJson(credentials);
+	await PlatformCredential.updateOne({ _id: tokenReference, userId }, { $set: encrypted });
+}
+
+/** Permanently deletes a stored credential (disconnect, reconnect with a new token, account deletion). */
+export async function deletePlatformCredentials(userId: string, tokenReference: string): Promise<void> {
+	await PlatformCredential.deleteOne({ _id: tokenReference, userId });
 }

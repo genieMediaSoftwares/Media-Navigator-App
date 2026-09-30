@@ -1,6 +1,7 @@
+import { getConfig } from '../config/env';
 import { HttpError } from '../lib/http';
 
-// Minimal Gemini client. Called only from the Worker; the API key never leaves the server and
+// Minimal Gemini client. Called only from the Node server; the API key never leaves the server and
 // is sent as a header (never in a URL, log line, or response). Callers pass sanitized analytics
 // only: no Meta tokens, credential references, session tokens or other secrets.
 
@@ -23,30 +24,30 @@ export function aiUnavailable(): HttpError {
 
 let warnedMissingKey = false;
 
-export function isAiConfigured(env: Env): boolean {
-	const configured = typeof env.GEMINI_API_KEY === 'string' && env.GEMINI_API_KEY.trim() !== '';
+export function isAiConfigured(): boolean {
+	const configured = Boolean(getConfig().GEMINI_API_KEY);
 	if (!configured && !warnedMissingKey) {
 		warnedMissingKey = true;
-		// Operator-facing only (Worker logs). The key's value is never logged.
-		console.warn('AI disabled: GEMINI_API_KEY is not set. Add it to Backend/.dev.vars locally, or `wrangler secret put GEMINI_API_KEY` in production.');
+		// Operator-facing only (server logs). The key's value is never logged.
+		console.warn('AI disabled: GEMINI_API_KEY is not set. Add it to Backend/.env locally, or to the Render environment in production.');
 	}
 	return configured;
 }
 
 /** Sends one prompt and returns Gemini's JSON output parsed (unvalidated: callers validate). */
 export async function generateStructured(
-	env: Env,
 	request: { systemInstruction: string; prompt: string; schema: GeminiSchema },
 	fetchImpl: typeof fetch = fetch,
 ): Promise<unknown> {
-	if (!isAiConfigured(env)) throw aiUnavailable();
+	if (!isAiConfigured()) throw aiUnavailable();
 
-	const model = env.GEMINI_MODEL && env.GEMINI_MODEL.trim() !== '' ? env.GEMINI_MODEL.trim() : DEFAULT_GEMINI_MODEL;
+	const config = getConfig();
+	const model = config.GEMINI_MODEL.trim() !== '' ? config.GEMINI_MODEL.trim() : DEFAULT_GEMINI_MODEL;
 	let response: Response;
 	try {
 		response = await fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
 			method: 'POST',
-			headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+			headers: { 'Content-Type': 'application/json', 'x-goog-api-key': config.GEMINI_API_KEY as string },
 			signal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
 			body: JSON.stringify({
 				systemInstruction: { parts: [{ text: request.systemInstruction }] },

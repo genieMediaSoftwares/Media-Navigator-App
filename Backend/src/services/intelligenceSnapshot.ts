@@ -1,5 +1,5 @@
 import { ConnectedAccountRow, findAccountById, findAccountsByUserId } from '../db/accounts';
-import { getAllInstagramMediaByAccountId, getInstagramInsightsByAccountId, InstagramMediaRow } from '../db/instagramData';
+import { ContentRow, getAccountInsights, getAllContentByAccountId } from '../db/content';
 import { HttpError } from '../lib/http';
 import {
 	ArchiveSummary,
@@ -18,13 +18,13 @@ import {
 /** Everything the intelligence endpoints and the AI context are computed from, for one account. */
 export interface IntelligenceSnapshot {
 	account: ConnectedAccountRow;
-	rows: InstagramMediaRow[];
+	rows: ContentRow[];
 	posts: IntelligencePost[];
 	profile: {
 		followers: number | null;
 		following: number | null;
 		mediaCount: number | null;
-		/** Latest account-level values from the Instagram insights API (period "day"), if any. */
+		/** Latest account-level values from the platform insights API (period "day"), if any. */
 		reach: { value: number; period: string | null; date: string | null } | null;
 		impressions: { value: number; period: string | null; date: string | null } | null;
 	};
@@ -35,34 +35,25 @@ export interface IntelligenceSnapshot {
 	timing: TimingAnalysis;
 }
 
-/** Resolves the requested account (or the user's first Instagram account) and checks ownership. */
-export async function resolveInstagramAccount(
-	db: D1Database,
+/**
+ * Resolves the requested account (checking ownership), or — when none is requested — the user's first
+ * Instagram account, falling back to their first connected account of any platform.
+ */
+export async function resolveAnalyticsAccount(
 	userId: string,
 	accountId: string | null,
 ): Promise<{ account: ConnectedAccountRow | null; accounts: ConnectedAccountRow[] }> {
-	const accounts = await findAccountsByUserId(db, userId);
+	const accounts = await findAccountsByUserId(userId);
 	if (accountId) {
-		const account = await findAccountById(db, accountId);
+		const account = await findAccountById(accountId);
 		if (!account || account.user_id !== userId) throw new HttpError(404, 'ACCOUNT_NOT_FOUND', 'Connected account not found.');
-		if (account.platform !== 'instagram') {
-			throw new HttpError(400, 'INVALID_PLATFORM', 'Intelligence is currently available for Instagram accounts only.');
-		}
 		return { account, accounts };
 	}
-	return { account: accounts.find((a) => a.platform === 'instagram') ?? null, accounts };
+	return { account: accounts.find((a) => a.platform === 'instagram') ?? accounts[0] ?? null, accounts };
 }
 
-export async function loadIntelligenceSnapshot(
-	env: Env,
-	account: ConnectedAccountRow,
-	timeZone: string,
-	now: number,
-): Promise<IntelligenceSnapshot> {
-	const [rows, insightRows] = await Promise.all([
-		getAllInstagramMediaByAccountId(env.DB, account.id),
-		getInstagramInsightsByAccountId(env.DB, account.id),
-	]);
+export async function loadIntelligenceSnapshot(account: ConnectedAccountRow, timeZone: string, now: number): Promise<IntelligenceSnapshot> {
+	const [rows, insightRows] = await Promise.all([getAllContentByAccountId(account.id), getAccountInsights(account.id)]);
 
 	const profileMetric = (name: string) => insightRows.find((i) => i.metric_name === name && i.provider_source === 'profile')?.metric_value ?? null;
 	const latestInsight = (name: string) => {

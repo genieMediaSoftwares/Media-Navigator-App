@@ -165,3 +165,9 @@ dist
 .env*
 !.env.example
 .wrangler/
+
+# D1 → MongoDB migration backups (contain password hashes and encrypted credentials)
+.migration-backups/
+
+# Node build output
+dist/

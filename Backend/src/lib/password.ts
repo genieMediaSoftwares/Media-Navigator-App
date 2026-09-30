@@ -1,10 +1,10 @@
 import { fromBase64Url, randomBytes, timingSafeEqual, toBase64Url } from './crypto';
 
 // PBKDF2-HMAC-SHA256 using the runtime's native Web Crypto implementation (no dependency).
-// 100,000 iterations is the maximum the Cloudflare Workers runtime accepts for PBKDF2.
-// Hashes are self-describing, so parameters can be raised later and old hashes still verify.
+// New hashes use 600,000 iterations (OWASP guidance for PBKDF2-SHA256). Hashes are self-describing,
+// so hashes created by the former Worker at 100,000 iterations still verify.
 const ALGORITHM_ID = 'pbkdf2-sha256';
-const ITERATIONS = 100_000;
+const ITERATIONS = 600_000;
 const SALT_BYTES = 16;
 const HASH_BITS = 256;
 

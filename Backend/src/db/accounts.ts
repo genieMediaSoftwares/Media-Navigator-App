@@ -1,12 +1,15 @@
+import { AccountStatus, ConnectedAccount, ConnectedAccountDoc, Platform } from '../models';
+
+/** Row shape used by routes and services (epoch-ms timestamps, as before the MongoDB migration). */
 export interface ConnectedAccountRow {
 	id: string;
 	user_id: string;
-	platform: string;
+	platform: Platform;
 	platform_account_id: string;
 	account_name: string | null;
 	account_username: string;
 	profile_picture_url?: string | null;
-	status: 'connected' | 'reauthorization_required' | 'error';
+	status: AccountStatus;
 	token_reference: string;
 	token_expires_at: number | null;
 	created_at: number;
@@ -14,148 +17,91 @@ export interface ConnectedAccountRow {
 	last_synced_at: number | null;
 }
 
-export async function findAccountsByUserId(db: D1Database, userId: string): Promise<ConnectedAccountRow[]> {
-	const statement = db
-		.prepare(
-			`SELECT id, user_id, platform, platform_account_id, account_name, account_username, profile_picture_url, status, token_reference, token_expires_at, created_at, updated_at, last_synced_at
-       FROM connected_accounts
-       WHERE user_id = ?
-       ORDER BY created_at ASC`,
-		)
-		.bind(userId);
-	const result = await statement.all<ConnectedAccountRow>();
-	return result.results;
-}
-
-export async function findAccountById(db: D1Database, id: string): Promise<ConnectedAccountRow | null> {
-	const statement = db
-		.prepare(
-			`SELECT id, user_id, platform, platform_account_id, account_name, account_username, profile_picture_url, status, token_reference, token_expires_at, created_at, updated_at, last_synced_at
-       FROM connected_accounts
-       WHERE id = ?`,
-		)
-		.bind(id);
-	return statement.first<ConnectedAccountRow>();
-}
-
-export async function findAccountByPlatformAndAccountId(
-	db: D1Database,
-	platform: string,
-	platformAccountId: string,
-): Promise<ConnectedAccountRow | null> {
-	const statement = db
-		.prepare(
-			`SELECT id, user_id, platform, platform_account_id, account_name, account_username, profile_picture_url, status, token_reference, token_expires_at, created_at, updated_at, last_synced_at
-       FROM connected_accounts
-       WHERE platform = ? AND platform_account_id = ?`,
-		)
-		.bind(platform, platformAccountId);
-	return statement.first<ConnectedAccountRow>();
-}
-
-export async function upsertConnectedAccount(
-	db: D1Database,
-	account: {
-		id: string;
-		userId: string;
-		platform: string;
-		platformAccountId: string;
-		accountName: string | null;
-		accountUsername: string;
-		profilePictureUrl?: string | null;
-		status: 'connected' | 'reauthorization_required' | 'error';
-		tokenReference: string;
-		tokenExpiresAt: number | null;
-		now: number;
-	},
-): Promise<ConnectedAccountRow> {
-	const existing = await db
-		.prepare(
-			`SELECT id, created_at, token_reference, last_synced_at FROM connected_accounts WHERE user_id = ? AND platform = ? AND platform_account_id = ?`,
-		)
-		.bind(account.userId, account.platform, account.platformAccountId)
-		.first<{ id: string; created_at: number; token_reference: string; last_synced_at: number | null }>();
-
-	if (existing) {
-		await db
-			.prepare(
-				`UPDATE connected_accounts
-         SET account_name = ?, account_username = ?, profile_picture_url = ?, status = ?, token_reference = ?, token_expires_at = ?, updated_at = ?
-         WHERE id = ?`,
-			)
-			.bind(
-				account.accountName,
-				account.accountUsername,
-				account.profilePictureUrl ?? null,
-				account.status,
-				account.tokenReference,
-				account.tokenExpiresAt,
-				account.now,
-				existing.id,
-			)
-			.run();
-
-		return {
-			id: existing.id,
-			user_id: account.userId,
-			platform: account.platform,
-			platform_account_id: account.platformAccountId,
-			account_name: account.accountName,
-			account_username: account.accountUsername,
-			profile_picture_url: account.profilePictureUrl ?? null,
-			status: account.status,
-			token_reference: account.tokenReference,
-			token_expires_at: account.tokenExpiresAt,
-			created_at: existing.created_at,
-			updated_at: account.now,
-			last_synced_at: existing.last_synced_at,
-		};
-	}
-
-	await db
-		.prepare(
-			`INSERT INTO connected_accounts
-       (id, user_id, platform, platform_account_id, account_name, account_username, profile_picture_url, status, token_reference, token_expires_at, created_at, updated_at, last_synced_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
-		)
-		.bind(
-			account.id,
-			account.userId,
-			account.platform,
-			account.platformAccountId,
-			account.accountName,
-			account.accountUsername,
-			account.profilePictureUrl ?? null,
-			account.status,
-			account.tokenReference,
-			account.tokenExpiresAt,
-			account.now,
-			account.now,
-		)
-		.run();
-
+function toRow(doc: ConnectedAccountDoc): ConnectedAccountRow {
 	return {
-		id: account.id,
-		user_id: account.userId,
-		platform: account.platform,
-		platform_account_id: account.platformAccountId,
-		account_name: account.accountName,
-		account_username: account.accountUsername,
-		profile_picture_url: account.profilePictureUrl ?? null,
-		status: account.status,
-		token_reference: account.tokenReference,
-		token_expires_at: account.tokenExpiresAt,
-		created_at: account.now,
-		updated_at: account.now,
-		last_synced_at: null,
+		id: doc._id,
+		user_id: doc.userId,
+		platform: doc.platform,
+		platform_account_id: doc.platformAccountId,
+		account_name: doc.accountName ?? null,
+		account_username: doc.accountUsername,
+		profile_picture_url: doc.profilePictureUrl ?? null,
+		status: doc.status,
+		token_reference: doc.tokenReference,
+		token_expires_at: doc.tokenExpiresAt ? doc.tokenExpiresAt.getTime() : null,
+		created_at: doc.createdAt.getTime(),
+		updated_at: doc.updatedAt.getTime(),
+		last_synced_at: doc.lastSyncedAt ? doc.lastSyncedAt.getTime() : null,
 	};
 }
 
+export async function findAccountsByUserId(userId: string): Promise<ConnectedAccountRow[]> {
+	const docs = await ConnectedAccount.find({ userId }).sort({ createdAt: 1 }).lean<ConnectedAccountDoc[]>();
+	return docs.map(toRow);
+}
+
+export async function findAccountById(id: string): Promise<ConnectedAccountRow | null> {
+	const doc = await ConnectedAccount.findById(id).lean<ConnectedAccountDoc>();
+	return doc ? toRow(doc) : null;
+}
+
+export async function findAccountByPlatformAndAccountId(platform: Platform, platformAccountId: string): Promise<ConnectedAccountRow | null> {
+	const doc = await ConnectedAccount.findOne({ platform, platformAccountId }).lean<ConnectedAccountDoc>();
+	return doc ? toRow(doc) : null;
+}
+
+export interface AccountUpsert {
+	id: string;
+	userId: string;
+	platform: Platform;
+	platformAccountId: string;
+	accountName: string | null;
+	accountUsername: string;
+	profilePictureUrl?: string | null;
+	status: AccountStatus;
+	tokenReference: string;
+	tokenExpiresAt: number | null;
+	now: number;
+}
+
+/**
+ * Inserts the account, or updates the existing (user, platform, platform account) row in place,
+ * keeping its id, creation time and last sync time. Returns the stored row and the token reference
+ * it replaced (so the caller can delete the old credential).
+ */
+export async function upsertConnectedAccount(account: AccountUpsert): Promise<{ row: ConnectedAccountRow; replacedTokenReference: string | null }> {
+	const at = new Date(account.now);
+	const previous = await ConnectedAccount.findOneAndUpdate(
+		{ userId: account.userId, platform: account.platform, platformAccountId: account.platformAccountId },
+		{
+			$set: {
+				accountName: account.accountName,
+				accountUsername: account.accountUsername,
+				profilePictureUrl: account.profilePictureUrl ?? null,
+				status: account.status,
+				tokenReference: account.tokenReference,
+				tokenExpiresAt: account.tokenExpiresAt === null ? null : new Date(account.tokenExpiresAt),
+				updatedAt: at,
+			},
+			$setOnInsert: { _id: account.id, createdAt: at, lastSyncedAt: null },
+		},
+		{ upsert: true, returnDocument: 'before' },
+	).lean<ConnectedAccountDoc>();
+
+	const stored = await ConnectedAccount.findOne({
+		userId: account.userId,
+		platform: account.platform,
+		platformAccountId: account.platformAccountId,
+	}).lean<ConnectedAccountDoc>();
+	if (!stored) throw new Error('Connected account missing after upsert');
+	const replaced = previous && previous.tokenReference !== account.tokenReference ? previous.tokenReference : null;
+	return { row: toRow(stored), replacedTokenReference: replaced };
+}
+
 export async function updateAccountStatusAndSynced(
-	db: D1Database,
 	id: string,
-	status: 'connected' | 'reauthorization_required' | 'error',
-	lastSyncedAt: number,
+	status: AccountStatus,
+	lastSyncedAt: number | null,
 	now: number,
 	updates?: {
 		accountName?: string | null;
@@ -163,31 +109,20 @@ export async function updateAccountStatusAndSynced(
 		profilePictureUrl?: string | null;
 	},
 ): Promise<void> {
-	await db
-		.prepare(
-			`UPDATE connected_accounts
-       SET status = ?, last_synced_at = ?, updated_at = ?,
-           account_name = COALESCE(?, account_name),
-           account_username = COALESCE(?, account_username),
-           profile_picture_url = COALESCE(?, profile_picture_url)
-       WHERE id = ?`,
-		)
-		.bind(
-			status,
-			lastSyncedAt,
-			now,
-			updates?.accountName ?? null,
-			updates?.accountUsername ?? null,
-			updates?.profilePictureUrl ?? null,
-			id,
-		)
-		.run();
+	const $set: Record<string, unknown> = { status, updatedAt: new Date(now) };
+	if (lastSyncedAt !== null) $set.lastSyncedAt = new Date(lastSyncedAt);
+	// Like the former COALESCE: a missing value never erases stored metadata.
+	if (updates?.accountName != null) $set.accountName = updates.accountName;
+	if (updates?.accountUsername != null) $set.accountUsername = updates.accountUsername;
+	if (updates?.profilePictureUrl != null) $set.profilePictureUrl = updates.profilePictureUrl;
+	await ConnectedAccount.updateOne({ _id: id }, { $set });
 }
 
-export async function deleteConnectedAccount(db: D1Database, id: string, userId: string): Promise<boolean> {
-	const result = await db
-		.prepare(`DELETE FROM connected_accounts WHERE id = ? AND user_id = ?`)
-		.bind(id, userId)
-		.run();
-	return (result.meta.changes ?? 0) > 0;
+export async function updateAccountStatus(id: string, status: AccountStatus, now: number): Promise<void> {
+	await ConnectedAccount.updateOne({ _id: id }, { $set: { status, updatedAt: new Date(now) } });
+}
+
+export async function deleteConnectedAccount(id: string, userId: string): Promise<boolean> {
+	const result = await ConnectedAccount.deleteOne({ _id: id, userId });
+	return result.deletedCount > 0;
 }
