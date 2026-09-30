@@ -46,7 +46,7 @@ function Column({ stat, ratio, best }: { stat: DayStat; ratio: number; best: boo
       <View style={{ height: CHART_HEIGHT, justifyContent: 'flex-end', width: '100%', alignItems: 'center' }}>
         <Animated.View className="w-7 rounded-lg" style={[{ backgroundColor: color }, style]} />
       </View>
-      <Text className={`mt-sm text-caption ${best ? 'font-bold text-navy' : 'text-neutral-500'}`}>{DAY_SHORT_NAMES[stat.day].slice(0, 1)}</Text>
+      <Text className={`mt-sm text-caption ${best ? 'font-bold text-navy' : 'text-neutral-500'}`}>{DAY_SHORT_NAMES[stat.day]}</Text>
     </View>
   );
 }

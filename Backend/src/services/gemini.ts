@@ -4,7 +4,7 @@ import { HttpError } from '../lib/http';
 // is sent as a header (never in a URL, log line, or response). Callers pass sanitized analytics
 // only: no Meta tokens, credential references, session tokens or other secrets.
 
-const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash';
 const GEMINI_TIMEOUT_MS = 30_000;
 
 /** OpenAPI-subset schema accepted by Gemini's `responseSchema`. */
