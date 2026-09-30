@@ -69,6 +69,9 @@ export function MetricPill({ icon, label, value, tone = 'light' }: { icon: IconN
   );
 }
 
+// Animated views here take plain style objects only: combining NativeWind `className` with a Reanimated
+// animated style on the same Animated.View left the animated size stuck at 0 (invisible bars).
+
 /** Horizontal bar that grows to `ratio` (0–1) on mount. */
 export function AnimatedBar({ ratio, color, height = 8, track = colors.neutral100 }: { ratio: number; color: string; height?: number; track?: string }) {
   const width = useSharedValue(0);
@@ -78,7 +81,7 @@ export function AnimatedBar({ ratio, color, height = 8, track = colors.neutral10
   const style = useAnimatedStyle(() => ({ width: `${width.value}%` }));
   return (
     <View className="overflow-hidden rounded-full" style={{ height, backgroundColor: track }}>
-      <Animated.View className="rounded-full" style={[{ height, backgroundColor: color }, style]} />
+      <Animated.View style={[{ height, borderRadius: height / 2, backgroundColor: color }, style]} />
     </View>
   );
 }
@@ -94,28 +97,4 @@ export function PerformanceBar({ label, value, ratio, color, emphasis = false }:
       <AnimatedBar ratio={ratio} color={color} height={emphasis ? 10 : 8} />
     </View>
   );
-}
-
-/**
- * Mini column chart of real per-item values (e.g. interactions of the latest posts, oldest → newest).
- * Nulls render as a faint stub so gaps in the data stay visible instead of looking like zero.
- */
-export function SparkBars({ values, height = 44, color = colors.white, faint = colors.onDarkSubtle }: { values: (number | null)[]; height?: number; color?: string; faint?: string }) {
-  const max = Math.max(0, ...values.map((v) => v ?? 0));
-  return (
-    <View className="flex-row items-end" style={{ height }} importantForAccessibility="no-hide-descendants">
-      {values.map((value, i) => (
-        <SparkBar key={i} ratio={value === null || max === 0 ? 0 : value / max} height={height} color={value === null ? faint : color} missing={value === null} />
-      ))}
-    </View>
-  );
-}
-
-function SparkBar({ ratio, height, color, missing }: { ratio: number; height: number; color: string; missing: boolean }) {
-  const h = useSharedValue(0);
-  useEffect(() => {
-    h.value = withTiming(missing ? 3 : Math.max(3, ratio * height), { duration: 520 });
-  }, [ratio, height, missing, h]);
-  const style = useAnimatedStyle(() => ({ height: h.value }));
-  return <Animated.View className="mx-[2px] flex-1 rounded-sm" style={[{ backgroundColor: color }, style]} />;
 }

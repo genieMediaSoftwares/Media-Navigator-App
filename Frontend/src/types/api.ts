@@ -192,6 +192,22 @@ export interface IntelligencePostMetrics {
   totalInteractions: number | null;
 }
 
+/**
+ * Performance tier relative to the account's typical (median) post. top: at least 2× typical;
+ * low: at most half of typical and older than 3 days; new: low so far but still collecting
+ * interactions; moderate: in between.
+ */
+export type ContentTier = 'top' | 'moderate' | 'low' | 'new';
+
+export interface TierThresholds {
+  sufficient: boolean;
+  minimumRequired: number;
+  typicalInteractions: number | null;
+  topMin: number | null;
+  lowMax: number | null;
+  counts: Record<ContentTier, number>;
+}
+
 export interface IntelligencePost {
   id: string;
   format: ContentFormat;
@@ -206,6 +222,10 @@ export interface IntelligencePost {
   engagementRate: number | null;
   /** Percent difference from the account average interactions per post. */
   vsBaselinePercent: number | null;
+  /** Present on library and post detail responses. */
+  tier?: ContentTier | null;
+  /** Percent difference from the typical (median) post. */
+  vsTypicalPercent?: number | null;
 }
 
 export interface FormatPerformance {
@@ -276,6 +296,7 @@ export interface IntelligenceOverview {
     newestPublishedAt: string | null;
   };
   formats: FormatPerformance[];
+  tiers: TierThresholds;
   ranking: {
     sufficient: boolean;
     minimumRequired: number;
@@ -352,7 +373,7 @@ export interface MediaPage {
   nextOffset: number | null;
 }
 
-export type MediaSort = 'recent' | 'oldest' | 'interactions' | 'likes' | 'comments' | 'views';
+export type MediaSort = 'recent' | 'oldest' | 'interactions' | 'lowest' | 'likes' | 'comments' | 'views';
 export type MediaPeriod = 'all' | '30d' | '90d' | '365d';
 
 export interface MediaQuery {
@@ -362,6 +383,7 @@ export interface MediaQuery {
   sort?: MediaSort;
   period?: MediaPeriod;
   performance?: 'above' | 'below' | null;
+  tier?: 'top' | 'moderate' | 'low' | null;
   offset?: number;
   limit?: number;
 }
@@ -378,6 +400,8 @@ export interface PostDetail {
     vsAccountPercent: number | null;
     formatAvgInteractions: number | null;
     formatPostCount: number;
+    typicalInteractions: number | null;
+    vsTypicalPercent: number | null;
     vsFormatPercent: number | null;
   };
   /** Measured facts about the post (format, time, caption length…). */
@@ -396,6 +420,12 @@ export interface AiPostAnalysis {
   suggestedFormat: ContentFormat | null;
   nextTest: string;
   expectedMeasurement: string;
+  /** What to repeat (top), try next time (moderate) or try instead (low). */
+  actions?: string[];
+  /** What to stop repeating (low only). */
+  stop?: string[];
+  /** What the available data cannot confirm. */
+  cannotConfirm?: string[];
   generatedAt: string;
 }
 
@@ -454,6 +484,8 @@ export interface PlannerInsights {
   /** The account the timing was measured for, and the accounts that can be chosen instead. */
   account?: IntelligenceAccount;
   accounts?: IntelligenceAccount[];
+  /** Measured comparison points: account mean and typical (median) interactions per post. */
+  baseline?: { avgInteractions: number | null; typicalInteractions: number | null };
   /** Publishing/scheduling support, stated by the server. */
   scheduling?: { supported: boolean; reason: string };
 }

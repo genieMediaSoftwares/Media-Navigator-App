@@ -17,8 +17,9 @@ import { EvidenceTag } from '@/features/intelligence/components/Evidence';
 import { MediaThumb } from '@/features/intelligence/components/MediaThumb';
 import { PostAnalysisSection } from '@/features/intelligence/components/PostAnalysisSection';
 import { FORMAT_LABELS } from '@/features/intelligence/labels';
+import { formatVsTypical, toneOf } from '@/features/intelligence/tiers';
 import { useApiResource } from '@/hooks/useApiResource';
-import { describeVsAverage, formatCompactNumber, formatDate, formatPercent, NOT_AVAILABLE } from '@/lib/format';
+import { formatCompactNumber, formatDate, formatPercent, NOT_AVAILABLE } from '@/lib/format';
 import { PostDetail } from '@/types/api';
 
 type IconName = ComponentProps<typeof Ionicons>['name'];
@@ -29,6 +30,7 @@ const FACT_ICONS: Record<string, IconName> = {
   'Caption length': 'text-outline',
   Hashtags: 'pricetag-outline',
   Mentions: 'at-outline',
+  Timing: 'time-outline',
 };
 
 function Caption({ text }: { text: string | null }) {
@@ -62,8 +64,15 @@ function PostDetailContent({ detail, accountId, autoAnalyze }: { detail: PostDet
   const format = FORMAT_LABELS[post.format];
   const heroHeight = Math.min(width * 1.15, 520);
   const num = (value: number | null) => (value === null ? null : formatCompactNumber(value));
-  const barMax = Math.max(post.interactions ?? 0, comparison.accountAvgInteractions ?? 0, comparison.formatAvgInteractions ?? 0);
-  const delta = comparison.vsAccountPercent;
+  const typical = comparison.typicalInteractions ?? null;
+  const barMax = Math.max(post.interactions ?? 0, typical ?? 0, comparison.formatAvgInteractions ?? 0);
+  const vsTypical = formatVsTypical(comparison.vsTypicalPercent);
+  const tone = toneOf(comparison.vsTypicalPercent);
+  const secondary = [
+    { label: 'Shares', value: num(m.shares) },
+    { label: 'Saves', value: num(m.saves) },
+    { label: 'Reach', value: num(m.reach) },
+  ].filter((metric) => metric.value !== null);
   const platform = platformOption(detail.account.platform);
   const openInstagram = post.permalink ? () => void Linking.openURL(post.permalink as string) : undefined;
 
@@ -104,18 +113,7 @@ function PostDetailContent({ detail, accountId, autoAnalyze }: { detail: PostDet
           <Overline icon="pulse" color={colors.primaryBright}>
             Performance
           </Overline>
-          <View className="mt-sm flex-row items-end" accessible>
-            <Text className="text-hero text-navy">{post.interactions === null ? '—' : formatCompactNumber(post.interactions)}</Text>
-            <View className="mb-sm ml-md">
-              <Text className="text-label font-normal text-neutral-500">interactions</Text>
-              {delta !== null ? (
-                <Text className={`text-label font-bold ${delta >= 0 ? 'text-success' : 'text-warning'}`}>
-                  {delta >= 0 ? '▲' : '▼'} {describeVsAverage(delta)}
-                </Text>
-              ) : null}
-            </View>
-          </View>
-          <View className="mt-lg">
+          <View className="mt-md">
             <MetricStrip
               metrics={[
                 { label: 'Views', value: num(m.views) },
@@ -124,36 +122,29 @@ function PostDetailContent({ detail, accountId, autoAnalyze }: { detail: PostDet
               ]}
             />
           </View>
-          <View className="mt-lg">
-            <MetricStrip
-              metrics={[
-                { label: 'Shares', value: num(m.shares) },
-                { label: 'Saves', value: num(m.saves) },
-                { label: 'Reach', value: num(m.reach) },
-                { label: 'Engagement', value: post.engagementRate === null ? null : formatPercent(post.engagementRate, 2), accent: colors.violet },
-              ]}
-            />
-          </View>
+          {secondary.length > 0 ? (
+            <View className="mt-lg">
+              <MetricStrip metrics={[...secondary, { label: 'Engagement', value: post.engagementRate === null ? null : formatPercent(post.engagementRate, 2) }]} />
+            </View>
+          ) : null}
         </FadeIn>
 
         <FadeIn index={1} className="mt-2xl">
           <View className="mb-md flex-row flex-wrap items-center justify-between">
             <Text className="mr-sm text-heading text-navy" accessibilityRole="header">
-              vs your account
+              How this compares
             </Text>
             <EvidenceTag kind="observed" />
           </View>
-          {post.interactions === null || comparison.accountAvgInteractions === null ? (
+          {post.interactions === null || typical === null ? (
             <Text className="text-body text-neutral-500">Not enough data to compare this post.</Text>
           ) : (
             <>
+              {vsTypical ? (
+                <Text className={`mb-md text-display ${tone === 'positive' ? 'text-success' : tone === 'negative' ? 'text-warning' : 'text-navy'}`}>{vsTypical}</Text>
+              ) : null}
               <PerformanceBar label="This post" value={formatCompactNumber(post.interactions)} ratio={barMax > 0 ? post.interactions / barMax : 0} color={colors.primaryBright} emphasis />
-              <PerformanceBar
-                label="Account average"
-                value={formatCompactNumber(comparison.accountAvgInteractions)}
-                ratio={barMax > 0 ? comparison.accountAvgInteractions / barMax : 0}
-                color={colors.neutral300}
-              />
+              <PerformanceBar label="Your typical post" value={formatCompactNumber(typical)} ratio={barMax > 0 ? typical / barMax : 0} color={colors.neutral300} />
               {comparison.formatAvgInteractions !== null ? (
                 <PerformanceBar
                   label={`${format.plural} average · ${comparison.formatPostCount}`}
@@ -162,7 +153,7 @@ function PostDetailContent({ detail, accountId, autoAnalyze }: { detail: PostDet
                   color={format.color}
                 />
               ) : null}
-              <Text className="text-caption text-neutral-400">Interactions = likes + comments.</Text>
+              <Text className="text-caption text-neutral-400">Interactions = likes + comments. Typical post = the middle of your posts by interactions.</Text>
             </>
           )}
         </FadeIn>
@@ -170,7 +161,7 @@ function PostDetailContent({ detail, accountId, autoAnalyze }: { detail: PostDet
         <FadeIn index={2} className="my-2xl">
           <View className="mb-md flex-row flex-wrap items-center justify-between">
             <Text className="mr-sm text-heading text-navy" accessibilityRole="header">
-              Observed
+              About this post
             </Text>
             <EvidenceTag kind="observed" />
           </View>
@@ -188,7 +179,8 @@ function PostDetailContent({ detail, accountId, autoAnalyze }: { detail: PostDet
         <PostAnalysisSection
           accountId={accountId}
           postId={post.id}
-          classification={detail.classification}
+          tier={detail.classification === 'insufficient' ? null : (post.tier ?? null)}
+          postFormat={post.format}
           aiConfigured={detail.aiConfigured}
           autoStart={autoAnalyze}
         />

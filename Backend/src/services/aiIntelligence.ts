@@ -2,7 +2,7 @@ import { getConfig } from '../config/env';
 import { HttpError } from '../lib/http';
 import { AiCache, AiQuestion, AiUsage } from '../models';
 import { aiUnavailable, generateStructured, GeminiSchema } from './gemini';
-import { CONTENT_FORMATS, ContentFormat, IntelligencePost, METRIC_DEFINITIONS, observedFactors } from './intelligence';
+import { CONTENT_FORMATS, ContentFormat, IntelligencePost, METRIC_DEFINITIONS, observedFactors, tierOf, vsTypicalPercent } from './intelligence';
 import { IntelligenceSnapshot, snapshotVersion } from './intelligenceSnapshot';
 import { notify } from './notifications';
 import { platformName } from './platforms';
@@ -78,6 +78,12 @@ export interface AiPostAnalysis {
 	suggestedFormat: string | null;
 	nextTest: string;
 	expectedMeasurement: string;
+	/** Practical next steps: what to repeat (top), try next time (moderate) or try instead (low). */
+	actions: string[];
+	/** What to stop repeating (low only). */
+	stop: string[];
+	/** What the available data cannot confirm. */
+	cannotConfirm: string[];
 	generatedAt: string;
 }
 
@@ -319,13 +325,30 @@ const POST_SCHEMA: GeminiSchema = {
 		suggestedFormat: { type: 'STRING', enum: [...CONTENT_FORMATS] },
 		nextTest: { type: 'STRING', description: 'One concrete experiment for the next post.' },
 		expectedMeasurement: { type: 'STRING' },
+		actions: {
+			type: 'ARRAY',
+			items: { type: 'STRING' },
+			description: 'Two to four short, practical actions (under 12 words each), phrased as instructions.',
+		},
+		stop: {
+			type: 'ARRAY',
+			items: { type: 'STRING' },
+			description: 'For below-typical posts only: up to three things to stop repeating. Empty otherwise.',
+		},
+		cannotConfirm: {
+			type: 'ARRAY',
+			items: { type: 'STRING' },
+			description: 'Up to three things the available data cannot confirm (e.g. causes that would need data not provided).',
+		},
 	},
-	required: ['summary', 'contributingFactors', 'explanation', 'recommendation', 'suggestedHook', 'suggestedFormat', 'nextTest', 'expectedMeasurement'],
+	required: ['summary', 'contributingFactors', 'explanation', 'recommendation', 'suggestedHook', 'suggestedFormat', 'nextTest', 'expectedMeasurement', 'actions', 'stop', 'cannotConfirm'],
 };
 
+/** Maps the post's tier (relative to the account's typical post) to the analysis kind. */
 export function classifyPost(snapshot: IntelligenceSnapshot, post: IntelligencePost): AiPostAnalysis['kind'] {
-	if (snapshot.ranking.working.some((p) => p.id === post.id)) return 'top';
-	if (post.vsBaselinePercent !== null && post.vsBaselinePercent < 0) return 'attention';
+	const tier = tierOf(post, snapshot.tiers, Date.now());
+	if (tier === 'top') return 'top';
+	if (tier === 'low') return 'attention';
 	return 'typical';
 }
 
@@ -336,20 +359,25 @@ export async function getPostAnalysis(
 	now: number,
 ): Promise<AiPostAnalysis> {
 	const kind = classifyPost(snapshot, post);
-	const key = `ai:v1:post:${snapshot.account.id}:${post.id}:${snapshotVersion(snapshot.account)}`;
+	const key = `ai:v2:post:${snapshot.account.id}:${post.id}:${snapshotVersion(snapshot.account)}:${kind}`;
 	const { value } = await cached(key, { userId, accountId: snapshot.account.id }, now, async () => {
 		await enforceAiRateLimit(userId, now);
 		const task =
 			kind === 'top'
-				? 'This post is one of the account’s top performers. Explain what may have made it work and which repeatable pattern to try next.'
+				? 'This post performed far above the account’s typical post. Explain what may have made it work. actions = what to repeat. stop = [].'
 				: kind === 'attention'
-					? 'This post performed below the account average. Diagnose possible contributing factors and propose a better hook, format and next test.'
-					: 'Explain how this post compares with the account average and what to try next.';
+					? 'This post performed well below the account’s typical post. Explain why it may have underperformed. stop = what to stop repeating; actions = what to try instead. Be constructive.'
+					: 'This post performed around the account’s typical range. Explain what may be limiting it. actions = what to try next time to improve it. stop = [].';
 		const output = (await generateStructured({
 			systemInstruction: systemInstruction(snapshot),
 			prompt: `${task}
 Post:
-${JSON.stringify({ ...postContext(post), observedFacts: observedFactors(post, snapshot.timing.timezone) })}
+${JSON.stringify({
+	...postContext(post),
+	typicalInteractionsPerPost: snapshot.tiers.typicalInteractions,
+	vsTypicalPostPercent: vsTypicalPercent(post, snapshot.tiers.typicalInteractions),
+	observedFacts: observedFactors(post, snapshot.timing.timezone, snapshot.timing.windows),
+})}
 Account context:
 ${JSON.stringify({ ...buildAiContext(snapshot), posts: undefined })}`,
 			schema: POST_SCHEMA,
@@ -367,6 +395,9 @@ ${JSON.stringify({ ...buildAiContext(snapshot), posts: undefined })}`,
 			suggestedFormat: CONTENT_FORMATS.includes(format as ContentFormat) ? format : null,
 			nextTest: text(output?.nextTest),
 			expectedMeasurement: text(output?.expectedMeasurement),
+			actions: textList(output?.actions, 4),
+			stop: kind === 'attention' ? textList(output?.stop, 3) : [],
+			cannotConfirm: textList(output?.cannotConfirm, 3),
 			generatedAt: new Date(now).toISOString(),
 		};
 	});

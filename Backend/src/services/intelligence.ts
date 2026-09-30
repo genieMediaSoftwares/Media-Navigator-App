@@ -319,17 +319,77 @@ export function computeTiming(posts: IntelligencePost[], timeZone: string): Timi
 	return { ...base, sufficient: true, heatmap, windows };
 }
 
+// ---- Top / moderate / low tiers --------------------------------------------------
+
+/**
+ * Content tiers relative to the account's *typical* post (the median), so a few viral posts do not
+ * make everything else look like a failure. Top: at least 2x typical. Low: at most half of typical and
+ * older than 3 days (newer posts are still collecting interactions: 'new'). Moderate: in between.
+ */
+export type ContentTier = 'top' | 'moderate' | 'low' | 'new';
+
+export interface TierThresholds {
+	sufficient: boolean;
+	minimumRequired: number;
+	/** Median interactions per post. */
+	typicalInteractions: number | null;
+	/** Posts with at least this many interactions are top. */
+	topMin: number | null;
+	/** Posts with at most this many interactions (and older than 3 days) are low; null when there is no low tier. */
+	lowMax: number | null;
+	counts: Record<ContentTier, number>;
+}
+
+export function computeTierThresholds(baseline: Baseline, posts: IntelligencePost[], now: number): TierThresholds {
+	const median = baseline.medianInteractions;
+	const sufficient = median !== null && baseline.sampleSize >= MIN_POSTS_FOR_RANKING;
+	const thresholds: TierThresholds = {
+		sufficient,
+		minimumRequired: MIN_POSTS_FOR_RANKING,
+		typicalInteractions: median,
+		topMin: sufficient ? Math.max(median * 2, median + 1) : null,
+		lowMax: sufficient && median > 0 ? round(median / 2) : null,
+		counts: { top: 0, moderate: 0, low: 0, new: 0 },
+	};
+	for (const post of posts) {
+		const tier = tierOf(post, thresholds, now);
+		if (tier) thresholds.counts[tier]++;
+	}
+	return thresholds;
+}
+
+export function tierOf(post: IntelligencePost, t: Pick<TierThresholds, 'sufficient' | 'topMin' | 'lowMax'>, now: number): ContentTier | null {
+	if (!t.sufficient || post.interactions === null || t.topMin === null) return null;
+	if (post.interactions >= t.topMin) return 'top';
+	if (t.lowMax !== null && post.interactions <= t.lowMax) {
+		const old = post.publishedAt !== null && now - Date.parse(post.publishedAt) >= ATTENTION_MIN_AGE_MS;
+		return old ? 'low' : 'new';
+	}
+	return 'moderate';
+}
+
+/** Percent difference from the typical (median) post; null when either side is unknown. */
+export function vsTypicalPercent(post: IntelligencePost, typical: number | null): number | null {
+	if (post.interactions === null || typical === null || typical <= 0) return null;
+	return round(((post.interactions - typical) / typical) * 100, 1);
+}
+
 // ---- Observed facts for a single post ---------------------------------------
 
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 /** Measurable properties of a post. These are facts, never interpretations. */
-export function observedFactors(post: IntelligencePost, timeZone: string): Array<{ label: string; value: string }> {
+export function observedFactors(post: IntelligencePost, timeZone: string, strongWindows: TimingCell[] = []): Array<{ label: string; value: string }> {
 	const facts: Array<{ label: string; value: string }> = [{ label: 'Format', value: post.format }];
 	if (post.publishedAt) {
 		const local = localDayHour(post.publishedAt, timeZone);
 		if (local) {
 			facts.push({ label: 'Published', value: `${DAY_NAMES[local.dayOfWeek]}, ${String(local.hour).padStart(2, '0')}:00 (${timeZone})` });
+			// Only stated when timing patterns exist (enough measured history).
+			if (strongWindows.length > 0) {
+				const inWindow = strongWindows.some((w) => w.dayOfWeek === local.dayOfWeek && local.hour >= w.startHour && local.hour < w.endHour);
+				facts.push({ label: 'Timing', value: inWindow ? 'In one of your strongest measured windows' : 'Outside your strongest measured windows' });
+			}
 		}
 	}
 	const caption = post.caption ?? '';

@@ -57,6 +57,8 @@ export function tileFromDashboardPost(post: InstagramDashboardPost): MediaTileDa
 
 type IconName = ComponentProps<typeof Ionicons>['name'];
 
+const BADGE_COLORS = { positive: colors.success, neutral: colors.neutral500, negative: colors.warning } as const;
+
 function OverlayStat({ icon, value }: { icon: IconName; value: number }) {
   return (
     <View className="mr-md flex-row items-center">
@@ -77,13 +79,15 @@ interface MediaTileProps {
   showDelta?: boolean;
   showDate?: boolean;
   compact?: boolean;
+  /** A measured comparison shown top-right instead of the account-average delta (e.g. "3.5× typical"). */
+  badge?: { text: string; tone: 'positive' | 'neutral' | 'negative' } | null;
 }
 
 /**
  * The user's own media as the primary visual: image, bottom scrim with real metrics, format badge
  * and (optionally) the measured difference from the account average.
  */
-export const MediaTile = memo(function MediaTile({ item, width, aspect = 1, onPress, cta, showDelta = false, showDate = false, compact = false }: MediaTileProps) {
+export const MediaTile = memo(function MediaTile({ item, width, aspect = 1, onPress, cta, showDelta = false, showDate = false, compact = false, badge = null }: MediaTileProps) {
   const format = FORMAT_LABELS[item.format];
   const height = width * aspect;
   const delta = item.vsBaselinePercent;
@@ -94,7 +98,7 @@ export const MediaTile = memo(function MediaTile({ item, width, aspect = 1, onPr
     item.views !== null ? describeMetric(item.views, 'views') : null,
     describeMetric(item.likes, 'likes'),
     describeMetric(item.comments, 'comments'),
-    showDelta && delta !== null ? describeVsAverage(delta) : null,
+    badge ? badge.text : showDelta && delta !== null ? describeVsAverage(delta) : null,
   ]
     .filter(Boolean)
     .join(', ');
@@ -116,7 +120,11 @@ export const MediaTile = memo(function MediaTile({ item, width, aspect = 1, onPr
             <Text className="ml-1 text-overline uppercase text-white">{format.singular}</Text>
           </View>
         ) : null}
-        {showDelta && delta !== null ? (
+        {badge ? (
+          <View className="absolute right-sm top-sm rounded-full px-sm py-1" style={{ backgroundColor: BADGE_COLORS[badge.tone] }}>
+            <Text className="text-caption font-bold text-white">{badge.text}</Text>
+          </View>
+        ) : showDelta && delta !== null ? (
           <View className="absolute right-sm top-sm rounded-full px-sm py-1" style={{ backgroundColor: delta >= 0 ? colors.success : colors.warning }}>
             <Text className="text-caption font-bold text-white">
               {delta >= 0 ? '▲' : '▼'} {formatVsAverageCompact(delta)}
@@ -153,10 +161,11 @@ interface MediaRailProps {
   showDate?: boolean;
   /** Horizontal inset matching the screen gutter so tiles align with content above. */
   inset?: number;
+  badgeFor?: (item: MediaTileData) => MediaTileProps['badge'];
 }
 
 /** Horizontally scrolling, snapping rail of media tiles. Virtualized, so long rails stay cheap. */
-export function MediaRail({ items, width, aspect, onPress, cta, showDelta, showDate, inset = 24 }: MediaRailProps) {
+export function MediaRail({ items, width, aspect, onPress, cta, showDelta, showDate, inset = 24, badgeFor }: MediaRailProps) {
   const gap = 12;
   return (
     <FlatList
@@ -172,7 +181,7 @@ export function MediaRail({ items, width, aspect, onPress, cta, showDelta, showD
       initialNumToRender={3}
       windowSize={5}
       renderItem={({ item }) => (
-        <MediaTile item={item} width={width} aspect={aspect} onPress={() => onPress(item)} cta={cta} showDelta={showDelta} showDate={showDate} />
+        <MediaTile item={item} width={width} aspect={aspect} onPress={() => onPress(item)} cta={cta} showDelta={showDelta} showDate={showDate} badge={badgeFor?.(item)} />
       )}
     />
   );

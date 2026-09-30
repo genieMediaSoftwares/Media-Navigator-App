@@ -44,7 +44,8 @@ function Column({ stat, ratio, best }: { stat: DayStat; ratio: number; best: boo
         {stat.avgInteractions === null ? '–' : formatCompactNumber(stat.avgInteractions)}
       </Text>
       <View style={{ height: CHART_HEIGHT, justifyContent: 'flex-end', width: '100%', alignItems: 'center' }}>
-        <Animated.View className="w-7 rounded-lg" style={[{ backgroundColor: color }, style]} />
+        {/* Plain style only: className + an animated style on one Animated.View kept the height at 0. */}
+        <Animated.View style={[{ width: 28, borderRadius: 8, backgroundColor: color }, style]} />
       </View>
       <Text className={`mt-sm text-caption ${best ? 'font-bold text-navy' : 'text-neutral-500'}`}>{DAY_SHORT_NAMES[stat.day]}</Text>
     </View>

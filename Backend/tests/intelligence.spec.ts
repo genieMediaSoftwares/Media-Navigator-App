@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { overrideConfig } from '../src/config/env';
 import { AiCache, AiQuestion } from '../src/models';
-import { classifyFormat, computeTiming, interactionsOf, normalizeTimestamp, toIntelligencePost } from '../src/services/intelligence';
+import { classifyFormat, computeBaseline, computeTierThresholds, computeTiming, interactionsOf, normalizeTimestamp, tierOf, toIntelligencePost } from '../src/services/intelligence';
 import { call, signUp } from './helpers';
 
 // Meta and Gemini are mocked at the fetch boundary. These fixtures exist only inside the test runtime.
@@ -140,6 +140,35 @@ describe('intelligence calculations (unit)', () => {
 	});
 });
 
+describe('content tiers (unit)', () => {
+	const row = (id: string, interactions: number, daysAgo: number) => ({
+		id, connected_account_id: 'a', platform: 'instagram' as const, provider_media_id: id, format: 'POST' as const, media_type: 'IMAGE',
+		media_product_type: 'FEED', title: null, caption: null, permalink: null, media_url: null, thumbnail_url: null, timestamp: null,
+		published_at: new Date(Date.now() - daysAgo * DAY).toISOString(), like_count: interactions, comments_count: 0, views: null, reach: null,
+		saved: null, shares: null, total_interactions: null, extra_metrics: null, insights_synced_at: null, created_at: 0, updated_at: 0,
+	});
+
+	it('classifies against the typical (median) post, not the viral-skewed mean', () => {
+		const rows = [1, 2, 8, 8, 8, 9, 20, 100].map((n, i) => row(`p${i}`, n, 10)).concat(row('fresh', 1, 1));
+		const baseline = computeBaseline(rows);
+		const posts = rows.map((r) => toIntelligencePost(r, 1000, baseline.avgInteractions));
+		const tiers = computeTierThresholds(baseline, posts, Date.now());
+		expect(tiers).toMatchObject({ sufficient: true, typicalInteractions: 8, topMin: 16, lowMax: 4 });
+		// 1 and 2 are low; the fresh post with 1 interaction is still collecting ('new').
+		expect(tiers.counts).toEqual({ top: 2, moderate: 4, low: 2, new: 1 });
+		expect(tierOf(posts.find((p) => p.id === 'p6')!, tiers, Date.now())).toBe('top');
+	});
+
+	it('does not classify without enough history', () => {
+		const rows = [5, 6].map((n, i) => row(`q${i}`, n, 10));
+		const baseline = computeBaseline(rows);
+		const posts = rows.map((r) => toIntelligencePost(r, 1000, baseline.avgInteractions));
+		const tiers = computeTierThresholds(baseline, posts, Date.now());
+		expect(tiers.sufficient).toBe(false);
+		expect(tierOf(posts[0], tiers, Date.now())).toBeNull();
+	});
+});
+
 describe('intelligence API', () => {
 	const ENDPOINTS: Array<['GET' | 'POST', string]> = [
 		['GET', '/api/intelligence/overview'],
@@ -254,7 +283,11 @@ describe('intelligence API', () => {
 		const res = await call('GET', `/api/intelligence/media/${postId}?tz=UTC`, { token: owner.user.token });
 		expect(res.status).toBe(200);
 		const detail = (res.body as any).data;
-		expect(detail.classification).toBe('top');
+		// Tiers compare with the typical (median) post: 87 interactions is below 2 × 48.5, so the best post
+		// here is moderate — not "top" just because it beats the mean.
+		expect(detail.classification).toBe('typical');
+		expect(detail.post.tier).toBe('moderate');
+		expect(detail.comparison.typicalInteractions).toBe(48.5);
 		expect(detail.comparison.accountAvgInteractions).toBe(48.5);
 		expect(detail.observedFactors.map((f: any) => f.label)).toEqual(['Format', 'Published', 'Caption length', 'Hashtags', 'Mentions']);
 
@@ -371,6 +404,24 @@ describe('intelligence API', () => {
 		const res = await call('GET', '/api/planner/insights?tz=UTC', { token: user.token });
 		expect(res.status).toBe(200);
 		expect((res.body as any).data).toMatchObject({ sufficient: false, heatmap: [], recommendedWindows: [], minimumRequired: 30 });
+	});
+
+	it('filters the content library by tier and reports tiers in the overview', async () => {
+		// interactions 10, 21, …, 131 → typical (median) 70.5: top ≥ 141 (none), low ≤ 35.25 (10, 21, 32)
+		const { user } = await connect({ igId: 'ig_intel_tiers', media: metaMedia(12) });
+		const overview = (await call('GET', '/api/intelligence/overview', { token: user.token })).body.data.overview;
+		expect(overview.tiers).toMatchObject({ sufficient: true, typicalInteractions: 70.5, topMin: 141, lowMax: 35.25, counts: { top: 0, moderate: 9, low: 3, new: 0 } });
+
+		const low = (await call('GET', '/api/intelligence/media?tier=low&sort=lowest', { token: user.token })).body.data;
+		expect(low.total).toBe(3);
+		expect(low.items.map((p: any) => p.interactions)).toEqual([10, 21, 32]);
+		expect(low.items.every((p: any) => p.tier === 'low')).toBe(true);
+		expect(low.items[0].vsTypicalPercent).toBe(-85.8);
+
+		const moderate = (await call('GET', '/api/intelligence/media?tier=moderate&format=REEL', { token: user.token })).body.data;
+		expect(moderate.items.every((p: any) => p.tier === 'moderate' && p.format === 'REEL')).toBe(true);
+		expect((await call('GET', '/api/intelligence/media?tier=top', { token: user.token })).body.data.total).toBe(0);
+		expect((await call('GET', '/api/intelligence/media?tier=viral', { token: user.token })).status).toBe(400);
 	});
 
 	it('planner reports measured windows once history is sufficient', async () => {

@@ -65,7 +65,8 @@ function RootNavigator() {
         <Stack.Screen name="intelligence/library" options={{ ...pushedScreenOptions, title: 'Content library' }} />
         <Stack.Screen name="intelligence/post/[id]" options={{ ...pushedScreenOptions, title: 'Post performance' }} />
         <Stack.Screen name="intelligence/insight/[id]" options={{ ...pushedScreenOptions, title: 'AI insight' }} />
-        <Stack.Screen name="intelligence/formats" options={{ ...pushedScreenOptions, title: 'Format performance' }} />
+        <Stack.Screen name="intelligence/formats" options={{ ...pushedScreenOptions, title: 'Formats' }} />
+        <Stack.Screen name="intelligence/trends" options={{ ...pushedScreenOptions, title: 'Patterns' }} />
         {/* Ask renders its own header so the composer can sit exactly above the keyboard. */}
         <Stack.Screen name="intelligence/ask" options={{ headerShown: false }} />
       </Stack.Protected>

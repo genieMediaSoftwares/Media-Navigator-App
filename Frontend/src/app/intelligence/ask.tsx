@@ -169,7 +169,7 @@ export default function AskScreen() {
           <Text className="text-title text-navy" accessibilityRole="header">
             Ask Media Navigator
           </Text>
-          <Text className="text-caption text-neutral-500">Answers use only your synced {platformName} data</Text>
+          <Text className="text-caption text-neutral-500">Ask questions about your real {platformName} history</Text>
         </View>
       </View>
 
@@ -192,7 +192,7 @@ export default function AskScreen() {
             <View className="mb-xl">
               <Text className="text-display text-navy">What would you like to know?</Text>
               <Text className="mt-xs text-body text-neutral-500">
-                Ask about your posts, formats and engagement. If your data can’t answer something, Media Navigator will say so.
+                Answers come only from your synced posts and their numbers. If your data can’t answer something, Media Navigator says so.
               </Text>
               {aiConfigured ? (
                 <View className="mt-lg">

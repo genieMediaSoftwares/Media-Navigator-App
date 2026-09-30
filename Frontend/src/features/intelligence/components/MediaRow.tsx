@@ -15,10 +15,18 @@ interface MediaRowProps {
   actionLabel?: string;
   /** Show the "vs account average" chip. */
   showBaseline?: boolean;
+  /** A measured comparison chip shown instead of the account-average chip (e.g. "−85% vs typical"). */
+  badge?: { text: string; tone: 'positive' | 'neutral' | 'negative' } | null;
 }
 
+const BADGE_CLASSES = {
+  positive: { box: 'bg-success-light', text: 'text-success' },
+  neutral: { box: 'bg-neutral-100', text: 'text-neutral-500' },
+  negative: { box: 'bg-warning-light', text: 'text-warning' },
+} as const;
+
 /** Compact list row: thumbnail, format, caption and the post's key metrics. No card chrome. */
-export function MediaRow({ post, onPress, actionLabel, showBaseline = true }: MediaRowProps) {
+export function MediaRow({ post, onPress, actionLabel, showBaseline = true, badge = null }: MediaRowProps) {
   const format = FORMAT_LABELS[post.format];
   const delta = post.vsBaselinePercent;
   const metrics = [
@@ -34,7 +42,7 @@ export function MediaRow({ post, onPress, actionLabel, showBaseline = true }: Me
     describeMetric(post.metrics.likes, 'likes'),
     describeMetric(post.metrics.comments, 'comments'),
     post.engagementRate !== null ? `${formatPercent(post.engagementRate, 2)} engagement` : 'engagement not available',
-    delta !== null ? describeVsAverage(delta) : null,
+    badge ? badge.text : delta !== null ? describeVsAverage(delta) : null,
   ]
     .filter(Boolean)
     .join('. ');
@@ -62,14 +70,18 @@ export function MediaRow({ post, onPress, actionLabel, showBaseline = true }: Me
           {metrics.join(' · ')}
         </Text>
         <View className="mt-xs flex-row flex-wrap items-center">
-          {showBaseline && delta !== null ? (
+          {badge ? (
+            <View className={`mr-sm rounded-sm px-sm py-0.5 ${BADGE_CLASSES[badge.tone].box}`}>
+              <Text className={`text-caption font-semibold ${BADGE_CLASSES[badge.tone].text}`}>{badge.text}</Text>
+            </View>
+          ) : showBaseline && delta !== null ? (
             <View className={`mr-sm rounded-sm px-sm py-0.5 ${delta >= 0 ? 'bg-success-light' : 'bg-warning-light'}`}>
               <Text className={`text-caption font-semibold ${delta >= 0 ? 'text-success' : 'text-warning'}`}>
                 {delta >= 0 ? '▲' : '▼'} {formatVsAverageCompact(delta)}
               </Text>
             </View>
           ) : null}
-          {post.engagementRate !== null ? (
+          {!badge && post.engagementRate !== null ? (
             <Text className="mr-sm text-caption text-neutral-500">{formatPercent(post.engagementRate, 2)} eng.</Text>
           ) : null}
           {actionLabel ? <Text className="text-caption font-semibold text-primary">{actionLabel} ›</Text> : null}

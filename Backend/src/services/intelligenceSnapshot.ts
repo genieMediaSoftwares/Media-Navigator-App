@@ -7,10 +7,12 @@ import {
 	computeArchiveSummary,
 	computeBaseline,
 	computeFormatPerformance,
+	computeTierThresholds,
 	computeTiming,
 	FormatPerformance,
 	IntelligencePost,
 	rankPosts,
+	TierThresholds,
 	TimingAnalysis,
 	toIntelligencePost,
 } from './intelligence';
@@ -33,6 +35,7 @@ export interface IntelligenceSnapshot {
 	formats: FormatPerformance[];
 	ranking: { sufficient: boolean; working: IntelligencePost[]; attention: IntelligencePost[] };
 	timing: TimingAnalysis;
+	tiers: TierThresholds;
 }
 
 /**
@@ -84,6 +87,7 @@ export async function loadIntelligenceSnapshot(account: ConnectedAccountRow, tim
 		formats: computeFormatPerformance(posts),
 		ranking: rankPosts(posts, baseline.avgInteractions, now),
 		timing: computeTiming(posts, timeZone),
+		tiers: computeTierThresholds(baseline, posts, now),
 	};
 }
 

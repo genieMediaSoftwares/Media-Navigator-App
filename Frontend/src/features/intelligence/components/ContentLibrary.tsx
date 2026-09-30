@@ -12,6 +12,7 @@ import { RowsSkeleton } from '@/features/intelligence/components/IntelligenceSke
 import { MediaRow } from '@/features/intelligence/components/MediaRow';
 import { MediaTile, tileFromPost } from '@/features/intelligence/components/MediaTile';
 import { FORMAT_LABELS } from '@/features/intelligence/labels';
+import { TIER_COPY, TierFilter } from '@/features/intelligence/tiers';
 import { intelligenceSession } from '@/features/intelligence/session';
 import { ContentFormat, IntelligencePost, MediaPeriod, MediaSort } from '@/types/api';
 
@@ -24,6 +25,7 @@ const SORT_OPTIONS: { value: MediaSort; label: string }[] = [
   { value: 'recent', label: 'Newest first' },
   { value: 'oldest', label: 'Oldest first' },
   { value: 'interactions', label: 'Most interactions' },
+  { value: 'lowest', label: 'Fewest interactions' },
   { value: 'likes', label: 'Most likes' },
   { value: 'comments', label: 'Most comments' },
   { value: 'views', label: 'Most views' },
@@ -70,12 +72,14 @@ interface ContentLibraryProps {
   initialFormat?: ContentFormat | null;
   initialSort?: MediaSort;
   initialPerformance?: 'above' | 'below' | null;
+  /** Show only top, moderate or low content. */
+  initialTier?: TierFilter | null;
   /** Rendered above the search field, scrolling with the content (e.g. a screen summary). */
   summary?: ReactNode;
 }
 
 /** Content library (the archive): every synced post, searchable, filterable and paginated server-side. */
-export function ContentLibrary({ accountId, initialFormat = null, initialSort = 'recent', initialPerformance = null, summary }: ContentLibraryProps) {
+export function ContentLibrary({ accountId, initialFormat = null, initialSort = 'recent', initialPerformance = null, initialTier = null, summary }: ContentLibraryProps) {
   const router = useRouter();
   const params = { format: initialFormat ?? undefined, sort: initialSort, performance: initialPerformance ?? undefined };
   const { width } = useWindowDimensions();
@@ -86,6 +90,7 @@ export function ContentLibrary({ accountId, initialFormat = null, initialSort = 
   const [sort, setSort] = useState<MediaSort>(params.sort ?? 'recent');
   const [period, setPeriod] = useState<MediaPeriod>('all');
   const [performance, setPerformance] = useState<'above' | 'below' | null>(params.performance ?? null);
+  const [tier, setTier] = useState<TierFilter | null>(initialTier);
   const [view, setView] = useState<'list' | 'grid'>('grid');
   const [filtersOpen, setFiltersOpen] = useState(false);
 
@@ -107,8 +112,8 @@ export function ContentLibrary({ accountId, initialFormat = null, initialSort = 
   }, [searchInput]);
 
   const fetchPage = useCallback(
-    (offset: number) => fetchMediaPage({ accountId, q: search, format, sort, period, performance, offset, limit: PAGE_SIZE }),
-    [accountId, search, format, sort, period, performance],
+    (offset: number) => fetchMediaPage({ accountId, q: search, format, sort, period, performance, tier, offset, limit: PAGE_SIZE }),
+    [accountId, search, format, sort, period, performance, tier],
   );
 
   const loadFirstPage = useCallback(
@@ -153,13 +158,14 @@ export function ContentLibrary({ accountId, initialFormat = null, initialSort = 
   };
 
   const openPost = (post: IntelligencePost) => router.push({ pathname: '/intelligence/post/[id]', params: { id: post.id, accountId } });
-  const activeFilterCount = (sort !== 'recent' ? 1 : 0) + (period !== 'all' ? 1 : 0) + (performance ? 1 : 0);
+  const activeFilterCount = (sort !== 'recent' ? 1 : 0) + (period !== 'all' ? 1 : 0) + (performance ? 1 : 0) + (tier ? 1 : 0);
   const clearFilters = () => {
     setSearchInput('');
     setFormat(null);
     setSort('recent');
     setPeriod('all');
     setPerformance(null);
+    setTier(null);
   };
 
   const tileSize = (width - SIDE_PADDING * 2 - GRID_GAP * (GRID_COLUMNS - 1)) / GRID_COLUMNS;
@@ -167,6 +173,16 @@ export function ContentLibrary({ accountId, initialFormat = null, initialSort = 
   const header = (
     <View className="pb-sm">
       {summary}
+      {tier ? (
+        <View className="mb-md flex-row items-center justify-between rounded-xl bg-neutral-50 px-lg py-sm">
+          <Text className="flex-1 text-label text-navy">
+            Showing <Text className="font-semibold">{TIER_COPY[tier].title.toLowerCase()}</Text>
+          </Text>
+          <Pressable onPress={() => setTier(null)} accessibilityRole="button" accessibilityLabel="Show all content" className="min-h-11 justify-center pl-md">
+            <Text className="text-label font-semibold text-primary">Show all</Text>
+          </Pressable>
+        </View>
+      ) : null}
       <View className="min-h-12 flex-row items-center rounded-full bg-neutral-100 px-lg">
         <Ionicons name="search" size={18} color={colors.neutral500} />
         <TextInput

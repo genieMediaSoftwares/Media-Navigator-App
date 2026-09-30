@@ -16,9 +16,9 @@ import { MediaRow } from './MediaRow';
 export type EvidenceKind = 'observed' | 'aiSummary' | 'aiHypothesis' | 'aiSuggestion';
 
 const TAGS: Record<EvidenceKind, { label: string; icon: 'analytics-outline' | 'sparkles-outline' | 'bulb-outline' | 'flask-outline'; container: string; text: string; color: string }> = {
-  observed: { label: 'Observed data', icon: 'analytics-outline', container: 'bg-success-light', text: 'text-success', color: colors.success },
-  aiSummary: { label: 'AI summary of your data', icon: 'sparkles-outline', container: 'bg-sky', text: 'text-primary', color: colors.primary },
-  aiHypothesis: { label: 'AI hypothesis · not verified', icon: 'bulb-outline', container: 'bg-warning-light', text: 'text-warning', color: colors.warning },
+  observed: { label: 'Observed', icon: 'analytics-outline', container: 'bg-success-light', text: 'text-success', color: colors.success },
+  aiSummary: { label: 'AI interpretation', icon: 'sparkles-outline', container: 'bg-sky', text: 'text-primary', color: colors.primary },
+  aiHypothesis: { label: 'AI hypothesis', icon: 'bulb-outline', container: 'bg-warning-light', text: 'text-warning', color: colors.warning },
   aiSuggestion: { label: 'AI suggestion', icon: 'flask-outline', container: 'bg-sky', text: 'text-primary', color: colors.primary },
 };
 

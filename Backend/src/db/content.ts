@@ -309,13 +309,14 @@ export async function findContentById(connectedAccountId: string, id: string): P
 	return doc ? toContentRow(doc) : null;
 }
 
-export type MediaSort = 'recent' | 'oldest' | 'interactions' | 'likes' | 'comments' | 'views';
+export type MediaSort = 'recent' | 'oldest' | 'interactions' | 'lowest' | 'likes' | 'comments' | 'views';
 
 // Descending sorts put null last in MongoDB, so a missing metric never ranks as a low value.
 const SORTS: Record<MediaSort, Record<string, 1 | -1>> = {
 	recent: { publishedAt: -1, createdAt: -1, _id: 1 },
 	oldest: { publishedAt: 1, createdAt: 1, _id: 1 },
 	interactions: { interactions: -1, publishedAt: -1, _id: 1 },
+	lowest: { interactions: 1, publishedAt: -1, _id: 1 },
 	likes: { 'metrics.likes': -1, publishedAt: -1, _id: 1 },
 	comments: { 'metrics.comments': -1, publishedAt: -1, _id: 1 },
 	views: { 'metrics.views': -1, publishedAt: -1, _id: 1 },
@@ -329,6 +330,10 @@ export interface MediaQuery {
 	performance: 'above' | 'below' | null;
 	/** Required when `performance` is set: account average interactions per post. */
 	baselineInteractions: number | null;
+	/** Interaction bounds of a content tier (see services/intelligence.ts tierOf). */
+	interactionRange?: { gte?: number; gt?: number; lte?: number; lt?: number } | null;
+	/** Only items published at or before this time (low tier excludes posts still collecting interactions). */
+	publishedBefore?: Date | null;
 	sort: MediaSort;
 	limit: number;
 	offset: number;
@@ -343,10 +348,21 @@ export async function queryContent(connectedAccountId: string, query: MediaQuery
 	const filter: Record<string, unknown> = { connectedAccountId };
 	if (query.search) filter.caption = { $regex: escapeRegex(query.search), $options: 'i' };
 	if (query.format) filter.format = query.format;
-	if (query.since) filter.publishedAt = { $gte: query.since };
-	if (query.performance && query.baselineInteractions !== null) {
-		filter.interactions = { $ne: null, [query.performance === 'above' ? '$gt' : '$lt']: query.baselineInteractions };
+	if (query.since || query.publishedBefore) {
+		filter.publishedAt = { ...(query.since && { $gte: query.since }), ...(query.publishedBefore && { $lte: query.publishedBefore }) };
 	}
+	const interactions: Record<string, unknown> = {};
+	if (query.performance && query.baselineInteractions !== null) {
+		interactions[query.performance === 'above' ? '$gt' : '$lt'] = query.baselineInteractions;
+	}
+	for (const [op, value] of Object.entries(query.interactionRange ?? {})) {
+		if (typeof value !== 'number') continue;
+		const key = `$${op}`;
+		const current = interactions[key];
+		// Two bounds of the same kind: keep the stricter one.
+		interactions[key] = typeof current !== 'number' ? value : op.startsWith('g') ? Math.max(current, value) : Math.min(current, value);
+	}
+	if (Object.keys(interactions).length > 0) filter.interactions = { $ne: null, ...interactions };
 
 	const [docs, total] = await Promise.all([
 		ContentItem.find(filter).sort(SORTS[query.sort]).skip(query.offset).limit(query.limit).lean<ContentItemDoc[]>(),

@@ -11,9 +11,13 @@ import {
 	ContentFormat,
 	metricDefinitionsFor,
 	MIN_POSTS_FOR_RANKING,
+	IntelligencePost,
 	observedFactors,
 	resolveTimeZone,
+	tierOf,
+	TierThresholds,
 	toIntelligencePost,
+	vsTypicalPercent,
 } from '../services/intelligence';
 import { IntelligenceSnapshot, loadIntelligenceSnapshot, resolveAnalyticsAccount } from '../services/intelligenceSnapshot';
 import { platformName } from '../services/platforms';
@@ -34,6 +38,25 @@ export function accountSummary(row: ConnectedAccountRow) {
 	};
 }
 
+/** Adds the post's tier and its difference from the typical post (additive fields). */
+function withTier(post: IntelligencePost, tiers: TierThresholds, now: number) {
+	return { ...post, tier: tierOf(post, tiers, now), vsTypicalPercent: vsTypicalPercent(post, tiers.typicalInteractions) };
+}
+
+const TIERS = ['top', 'moderate', 'low'] as const;
+type TierFilter = (typeof TIERS)[number];
+
+/** Interaction bounds for a tier filter, matching tierOf(). Returns null when the tier cannot match anything. */
+function tierQuery(tier: TierFilter, tiers: TierThresholds, now: number) {
+	if (!tiers.sufficient || tiers.topMin === null) return null;
+	if (tier === 'top') return { interactionRange: { gte: tiers.topMin }, publishedBefore: null };
+	if (tier === 'low') {
+		if (tiers.lowMax === null) return null;
+		return { interactionRange: { lte: tiers.lowMax }, publishedBefore: new Date(now - 3 * 86_400_000) };
+	}
+	return { interactionRange: { lt: tiers.topMin, ...(tiers.lowMax !== null && { gt: tiers.lowMax }) }, publishedBefore: null };
+}
+
 function noAccount(): HttpError {
 	return new HttpError(404, 'NO_INSTAGRAM_ACCOUNT', 'Connect a social account to use Intelligence.');
 }
@@ -45,7 +68,7 @@ async function requireSnapshot(req: Request, userId: string, accountId: string |
 	return loadIntelligenceSnapshot(account, resolveTimeZone(queryParam(req, 'tz')), req.now);
 }
 
-const SORTS: readonly MediaSort[] = ['recent', 'oldest', 'interactions', 'likes', 'comments', 'views'];
+const SORTS: readonly MediaSort[] = ['recent', 'oldest', 'interactions', 'lowest', 'likes', 'comments', 'views'];
 const PERIOD_DAYS: Record<string, number> = { '30d': 30, '90d': 90, '365d': 365 };
 
 async function requirePost(req: Request, userId: string) {
@@ -93,6 +116,7 @@ export function intelligenceRouter(): Router {
 					working: snapshot.ranking.working,
 					attention: snapshot.ranking.attention,
 				},
+				tiers: snapshot.tiers,
 				timing: {
 					timezone: snapshot.timing.timezone,
 					sufficient: snapshot.timing.sufficient,
@@ -137,6 +161,8 @@ export function intelligenceRouter(): Router {
 		const formatParam = queryParam(req, 'format');
 		const performanceParam = queryParam(req, 'performance');
 		const periodParam = queryParam(req, 'period');
+		const tierParam = queryParam(req, 'tier');
+		if (tierParam && !TIERS.includes(tierParam as TierFilter)) throw new HttpError(400, 'VALIDATION_ERROR', 'Unsupported tier.');
 		if (!SORTS.includes(sortParam as MediaSort)) throw new HttpError(400, 'VALIDATION_ERROR', 'Unsupported sort.');
 		if (formatParam && !CONTENT_FORMATS.includes(formatParam as ContentFormat)) throw new HttpError(400, 'VALIDATION_ERROR', 'Unsupported format.');
 		if (performanceParam && performanceParam !== 'above' && performanceParam !== 'below') {
@@ -147,8 +173,14 @@ export function intelligenceRouter(): Router {
 		const limit = Math.min(Math.max(Number(queryParam(req, 'limit') ?? 20) || 20, 1), 50);
 		const offset = Math.max(Number(queryParam(req, 'offset') ?? 0) || 0, 0);
 		const days = periodParam ? PERIOD_DAYS[periodParam] : undefined;
+		const tierFilter = tierParam ? tierQuery(tierParam as TierFilter, snapshot.tiers, req.now) : null;
+		if (tierParam && !tierFilter) {
+			ok(res, { items: [], total: 0, nextOffset: null });
+			return;
+		}
 
 		const { rows, total } = await queryContent(snapshot.account.id, {
+			...(tierFilter ?? {}),
 			search: (queryParam(req, 'q') ?? '').slice(0, 100) || null,
 			format: formatParam,
 			since: days ? new Date(req.now - days * 86_400_000) : null,
@@ -159,7 +191,7 @@ export function intelligenceRouter(): Router {
 			offset,
 		});
 
-		const items = rows.map((row) => toIntelligencePost(row, snapshot.profile.followers, snapshot.baseline.avgInteractions));
+		const items = rows.map((row) => withTier(toIntelligencePost(row, snapshot.profile.followers, snapshot.baseline.avgInteractions), snapshot.tiers, req.now));
 		ok(res, { items, total, nextOffset: offset + items.length < total ? offset + items.length : null });
 	});
 
@@ -170,7 +202,7 @@ export function intelligenceRouter(): Router {
 		const formatAvg = formatStats?.avgInteractions ?? null;
 
 		ok(res, {
-			post,
+			post: withTier(post, snapshot.tiers, req.now),
 			account: accountSummary(snapshot.account),
 			classification: snapshot.ranking.sufficient ? classifyPost(snapshot, post) : 'insufficient',
 			comparison: {
@@ -179,12 +211,14 @@ export function intelligenceRouter(): Router {
 				vsAccountPercent: post.vsBaselinePercent,
 				formatAvgInteractions: formatAvg,
 				formatPostCount: formatStats?.count ?? 0,
+				typicalInteractions: snapshot.tiers.typicalInteractions,
+				vsTypicalPercent: vsTypicalPercent(post, snapshot.tiers.typicalInteractions),
 				vsFormatPercent:
 					post.interactions !== null && formatAvg !== null && formatAvg > 0
 						? Math.round(((post.interactions - formatAvg) / formatAvg) * 1000) / 10
 						: null,
 			},
-			observedFactors: observedFactors(post, snapshot.timing.timezone),
+			observedFactors: observedFactors(post, snapshot.timing.timezone, snapshot.timing.windows),
 			aiConfigured: isAiConfigured(),
 			definitions: metricDefinitionsFor(platformName(snapshot.account.platform)),
 		});

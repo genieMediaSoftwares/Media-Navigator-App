@@ -25,13 +25,11 @@ export const INSIGHT_LABELS: Record<InsightType, { label: string; icon: IconName
 
 /** Suggested starting points for Ask Media Navigator. Answers always come from the server. */
 export const SUGGESTED_QUESTIONS = [
-  'Which posts performed best?',
-  'What content generated the most engagement?',
-  'What patterns appear in my top posts?',
   'Which format performs best?',
-  'Which posts are below my average?',
-  'What should I post more often?',
-  'When does my content perform best?',
+  'Why did my top Reel perform so well?',
+  'Why are my recent posts performing lower?',
+  'What should I create more of?',
+  'What should I stop doing?',
 ] as const;
 
 /** Actionable copy for server error codes the Intelligence screens can hit. */

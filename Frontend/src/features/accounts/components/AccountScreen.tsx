@@ -4,7 +4,6 @@ import { ReactNode, useCallback, useEffect, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Linking, Platform, Pressable, RefreshControl, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 
 import { BottomSheet } from '@/components/BottomSheet';
-import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
 import { ListRow } from '@/components/ListRow';
 import { Button } from '@/components/ui/Button';
@@ -13,36 +12,23 @@ import { TextField } from '@/components/ui/TextField';
 import { Gradient } from '@/components/visual/Gradient';
 import { MetricPill, MetricStrip } from '@/components/visual/Metrics';
 import { FadeIn, PressableScale } from '@/components/visual/Motion';
-import { SegmentedControl } from '@/components/visual/SegmentedControl';
 import { Overline, SectionTitle } from '@/components/visual/Typography';
 import { colors } from '@/constants/colors';
 import { disconnectAccount, fetchAccountDashboard, fetchConnectedAccounts, syncAccount } from '@/features/accounts/api';
 import { PlatformOption, platformOption } from '@/features/accounts/platforms';
 import { useConnectAccount } from '@/features/accounts/useConnectAccount';
-import { fetchAiInsights, fetchIntelligenceOverview } from '@/features/intelligence/api';
+import { fetchIntelligenceOverview } from '@/features/intelligence/api';
 import { AccountAvatar } from '@/features/intelligence/components/AccountHeader';
-import { AiQuietState } from '@/features/intelligence/components/AiInsightsSection';
-import { FormatComparison, FormatMix } from '@/features/intelligence/components/FormatComparison';
-import { InsightHero } from '@/features/intelligence/components/InsightHero';
-import { MediaRail, MediaTile, tileFromDashboardPost, tileFromPost } from '@/features/intelligence/components/MediaTile';
-import { NeedsAttention } from '@/features/intelligence/components/NeedsAttention';
+import { MediaRail, tileFromDashboardPost } from '@/features/intelligence/components/MediaTile';
 import { SyncState, SyncStatus } from '@/features/intelligence/components/SyncStatus';
-import { describeIntelligenceError } from '@/features/intelligence/labels';
 import { intelligenceSession } from '@/features/intelligence/session';
 import { useApiResource } from '@/hooks/useApiResource';
 import { ApiError } from '@/lib/api/client';
 import { formatCompactNumber, formatPercent, formatRelativeTime } from '@/lib/format';
-import { ConnectedAccount, InstagramDashboardData, IntelligenceOverview, SocialPlatform } from '@/types/api';
-
-type Tab = 'overview' | 'content' | 'insights';
+import { ConnectedAccount, InstagramDashboardData, SocialPlatform } from '@/types/api';
 
 const FOLLOWER_LABEL: Record<SocialPlatform, string> = { instagram: 'Followers', facebook: 'Followers', youtube: 'Subscribers', linkedin: 'Followers' };
 const CONTENT_LABEL: Record<SocialPlatform, string> = { instagram: 'Posts', facebook: 'Posts', youtube: 'Videos', linkedin: 'Posts' };
-const TABS = [
-  { value: 'overview', label: 'Overview' },
-  { value: 'content', label: 'Content' },
-  { value: 'insights', label: 'Insights' },
-] as const;
 
 /**
  * One connected account: profile hero, metrics, content and insights — or, when the platform is not
@@ -84,7 +70,6 @@ function ConnectedAccountView({
   const isInstagram = platform.id === 'instagram';
   // Instagram opens Intelligence on its default account exactly as before; other platforms pass their account.
   const openIntelligence = () => router.navigate(isInstagram ? '/intelligence' : { pathname: '/intelligence', params: { accountId: account.id } });
-  const [tab, setTab] = useState<Tab>('overview');
   const [menuOpen, setMenuOpen] = useState(false);
   const [sync, setSync] = useState<SyncState>({ status: 'idle' });
   const [disconnecting, setDisconnecting] = useState(false);
@@ -233,17 +218,11 @@ function ConnectedAccountView({
             <ErrorState title="Account data didn’t load" message={dashboard.state.status === 'error' ? dashboard.state.message : 'Please try again.'} onRetry={dashboard.reload} />
           )}
 
-          <View className="mb-xl">
-            <SegmentedControl segments={TABS} value={tab} onChange={setTab} />
+          <LatestPosts dash={dash} accountId={account.id} />
+          <Button title="See what’s working" icon="sparkles-outline" onPress={openIntelligence} />
+          <View className="mt-sm">
+            <Button title="Content library" icon="grid-outline" variant="secondary" onPress={() => router.push({ pathname: '/intelligence/library', params: { accountId: account.id } })} />
           </View>
-
-          {tab === 'overview' ? (
-            <OverviewTab dash={dash} overview={overview} overviewLoading={intelligence.state.status === 'loading'} accountId={account.id} />
-          ) : tab === 'content' ? (
-            <ContentTab dash={dash} accountId={account.id} onSync={() => void runSync()} platformName={platform.name} />
-          ) : (
-            <InsightsTab overview={overview} loading={intelligence.state.status === 'loading'} accountId={account.id} onOpenIntelligence={openIntelligence} />
-          )}
         </View>
       </ScrollView>
 
@@ -263,159 +242,26 @@ function ConnectedAccountView({
   );
 }
 
-function OverviewTab({ dash, overview, overviewLoading, accountId }: { dash: InstagramDashboardData | null; overview: IntelligenceOverview | null; overviewLoading: boolean; accountId: string }) {
+/** The account's latest synced posts; analysis of them lives in Intelligence. */
+function LatestPosts({ dash, accountId }: { dash: InstagramDashboardData | null; accountId: string }) {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const posts = dash?.posts ?? [];
-
   return (
-    <View>
-      <FadeIn className="mb-2xl">
-        <AccountHighlight overview={overview} loading={overviewLoading} accountId={accountId} />
-      </FadeIn>
-
-      <FadeIn index={1} className="mb-2xl">
-        <SectionTitle eyebrow="Recent content" eyebrowIcon="images-outline" title="Latest posts" action={posts.length ? { label: 'Library', onPress: () => router.push({ pathname: '/intelligence/library', params: { accountId } }) } : undefined} />
-        {posts.length === 0 ? (
-          <Text className="text-label font-normal text-neutral-500">No synced posts yet. Tap Sync now to bring in your media.</Text>
-        ) : (
-          <MediaRail
-            items={posts.slice(0, 12).map(tileFromDashboardPost)}
-            width={Math.min(width * 0.44, 190)}
-            aspect={1.25}
-            showDate
-            onPress={(item) => router.push({ pathname: '/intelligence/post/[id]', params: { id: item.id, accountId } })}
-          />
-        )}
-      </FadeIn>
-
-      {overview && overview.formats.length > 0 ? (
-        <FadeIn index={2} className="mb-xl">
-          <SectionTitle eyebrow="Format performance" eyebrowIcon="layers-outline" eyebrowColor={colors.magenta} title="How each format performs" />
-          <FormatMix counts={overview.archive.formatCounts} />
-          <View className="mt-md">
-            <FormatComparison formats={overview.formats} onPressFormat={() => router.push({ pathname: '/intelligence/formats', params: { accountId } })} />
-          </View>
-        </FadeIn>
-      ) : null}
-    </View>
-  );
-}
-
-/** The single most useful AI output for the account, or a clear reason there isn't one. */
-function AccountHighlight({ overview, loading, accountId }: { overview: IntelligenceOverview | null; loading: boolean; accountId: string }) {
-  if (loading) return <Skeleton className="h-48 w-full rounded-3xl" />;
-  if (!overview) return <AiQuietState title="Account highlight unavailable" message="Pull to refresh to try again." />;
-  if (!overview.aiConfigured) return <AiQuietState title="AI analysis is temporarily unavailable" message="Your account metrics above are unaffected." />;
-  if (!overview.ranking.sufficient) {
-    return (
-      <AiQuietState
-        title="More content history needed"
-        message={`Account highlights unlock at ${overview.ranking.minimumRequired} posts with engagement data. ${overview.baseline.sampleSize} analyzed so far.`}
-        progress={overview.baseline.sampleSize / Math.max(overview.ranking.minimumRequired, 1)}
-      />
-    );
-  }
-  return <HighlightLoader accountId={accountId} version={overview.account.lastSyncedAt} />;
-}
-
-function HighlightLoader({ accountId, version }: { accountId: string; version: string | null }) {
-  const router = useRouter();
-  const fetcher = useCallback(() => fetchAiInsights(accountId), [accountId, version]);
-  const { state, reload } = useApiResource(fetcher);
-  useEffect(() => {
-    if (state.status === 'success') intelligenceSession.setInsights(accountId, state.data);
-  }, [state, accountId]);
-
-  if (state.status === 'loading') return <Skeleton className="h-48 w-full rounded-3xl" />;
-  if (state.status !== 'success') {
-    const copy = describeIntelligenceError(state.status === 'error' ? (state.code ?? 'AI_UNAVAILABLE') : 'AI_UNAVAILABLE', state.message);
-    return <AiQuietState title={copy.title} message={copy.message} onRetry={reload} />;
-  }
-  const insight = state.data.insights[0];
-  if (!insight) return <AiQuietState title="No highlight yet" message="Try again after your next sync." onRetry={reload} />;
-  return (
-    <InsightHero
-      eyebrow="Account highlight"
-      insight={insight}
-      onPress={() => router.push({ pathname: '/intelligence/insight/[id]', params: { id: insight.id, accountId } })}
-    />
-  );
-}
-
-function ContentTab({ dash, accountId, onSync, platformName }: { dash: InstagramDashboardData | null; accountId: string; onSync: () => void; platformName: string }) {
-  const router = useRouter();
-  const { width } = useWindowDimensions();
-  const posts = dash?.posts ?? [];
-  const gap = 3;
-  const tile = (width - 48 - gap * 2) / 3;
-
-  if (posts.length === 0) {
-    return <EmptyState compact icon="images-outline" title="No synced posts yet" message={`Sync your account to bring in your ${platformName} content and its metrics.`} action={{ label: 'Sync now', onPress: onSync }} />;
-  }
-  return (
-    <View>
-      <Text className="mb-md text-caption text-neutral-500">{posts.length} most recent posts</Text>
-      <View className="flex-row flex-wrap" style={{ gap }}>
-        {posts.map((post) => (
-          <MediaTile
-            key={post.id}
-            item={tileFromDashboardPost(post)}
-            width={tile}
-            aspect={1.25}
-            compact
-            onPress={() => router.push({ pathname: '/intelligence/post/[id]', params: { id: post.id, accountId } })}
-          />
-        ))}
-      </View>
-      <View className="mt-xl">
-        <Button title="Open full content library" icon="grid-outline" variant="secondary" onPress={() => router.push({ pathname: '/intelligence/library', params: { accountId } })} />
-      </View>
-    </View>
-  );
-}
-
-function InsightsTab({
-  overview,
-  loading,
-  accountId,
-  onOpenIntelligence,
-}: {
-  overview: IntelligenceOverview | null;
-  loading: boolean;
-  accountId: string;
-  onOpenIntelligence: () => void;
-}) {
-  const router = useRouter();
-  const { width } = useWindowDimensions();
-  if (loading) return <Skeleton className="h-72 w-full rounded-3xl" />;
-  if (!overview) return <AiQuietState title="Insights unavailable" message="Pull to refresh to try again." />;
-  const openPost = (id: string) => router.push({ pathname: '/intelligence/post/[id]', params: { id, accountId, analyze: '1' } });
-
-  return (
-    <View>
-      <FadeIn className="mb-2xl">
-        <SectionTitle eyebrow="What’s working" eyebrowIcon="trending-up" eyebrowColor={colors.success} title="Your top content" />
-        {!overview.ranking.sufficient ? (
-          <Text className="text-label font-normal text-neutral-500">
-            More content history needed — rankings appear at {overview.ranking.minimumRequired} posts with engagement data.
-          </Text>
-        ) : overview.ranking.working.length === 0 ? (
-          <Text className="text-label font-normal text-neutral-500">No post is above your account average yet.</Text>
-        ) : (
-          <MediaRail items={overview.ranking.working.map(tileFromPost)} width={Math.min(width * 0.62, 280)} aspect={1.25} showDelta cta="Why it worked" onPress={(item) => openPost(item.id)} />
-        )}
-      </FadeIn>
-      <NeedsAttention
-        posts={overview.ranking.attention}
-        baseline={overview.baseline.avgInteractions}
-        median={overview.baseline.medianInteractions}
-        sufficient={overview.ranking.sufficient}
-        onOpen={(post) => openPost(post.id)}
-        onSeeAll={() => router.push({ pathname: '/intelligence/library', params: { accountId, performance: 'below' } })}
-      />
-      <Button title="Open full Intelligence" icon="sparkles-outline" onPress={onOpenIntelligence} />
-    </View>
+    <FadeIn index={1} className="mb-2xl">
+      <SectionTitle title="Latest posts" />
+      {posts.length === 0 ? (
+        <Text className="text-label font-normal text-neutral-500">No synced posts yet. Tap Sync now to bring in your media.</Text>
+      ) : (
+        <MediaRail
+          items={posts.slice(0, 12).map(tileFromDashboardPost)}
+          width={Math.min(width * 0.44, 190)}
+          aspect={1.25}
+          showDate
+          onPress={(item) => router.push({ pathname: '/intelligence/post/[id]', params: { id: item.id, accountId } })}
+        />
+      )}
+    </FadeIn>
   );
 }
 

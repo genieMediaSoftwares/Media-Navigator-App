@@ -1,26 +1,24 @@
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect } from 'react';
-import { Pressable, Text, useWindowDimensions, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 
 import { EmptyState } from '@/components/EmptyState';
+import { ListRow } from '@/components/ListRow';
 import { Button } from '@/components/ui/Button';
-import { Skeleton } from '@/components/ui/Skeleton';
+import { Divider } from '@/components/ui/Divider';
+import { MetricStrip } from '@/components/visual/Metrics';
 import { FadeIn } from '@/components/visual/Motion';
-import { SectionTitle } from '@/components/visual/Typography';
-import { colors } from '@/constants/colors';
+import { SegmentedControl } from '@/components/visual/SegmentedControl';
 import { accountHref, platformOption } from '@/features/accounts/platforms';
-import { useApiResource } from '@/hooks/useApiResource';
-import { IntelligenceAccount, IntelligenceOverview } from '@/types/api';
+import { formatCompactNumber } from '@/lib/format';
+import { ContentFormat, IntelligenceAccount, IntelligenceOverview } from '@/types/api';
 
-import { fetchMediaPage } from '../api';
+import { FORMAT_LABELS } from '../labels';
 import { intelligenceSession } from '../session';
+import { TIER_COPY, TierFilter } from '../tiers';
 import { AccountHeader } from './AccountHeader';
-import { AiInsightsSection } from './AiInsightsSection';
-import { FormatComparison, FormatMix } from './FormatComparison';
-import { MediaRail, tileFromPost } from './MediaTile';
-import { ArchiveSection, AskBand, TimingSection } from './MiscSections';
-import { NeedsAttention } from './NeedsAttention';
-import { PerformanceHero } from './PerformanceHero';
+import { AiQuietState } from './AiInsightsSection';
+import { TierList } from './TierList';
 
 interface IntelligenceContentProps {
   overview: IntelligenceOverview;
@@ -31,42 +29,30 @@ interface IntelligenceContentProps {
   onExplain: () => void;
 }
 
-const RECENT_COUNT = 12;
+const TIER_ORDER: TierFilter[] = ['top', 'moderate', 'low'];
 
 /**
- * Intelligence home as an editorial story: performance → what AI found → what's working → what
- * needs attention → recent media → formats → timing → ask → archive. Everything else is a drill-down.
+ * Intelligence answers one question: what is working and what is not. A short summary, then the
+ * account's real content split into Top / Moderate / Low (relative to its typical post). Formats,
+ * trends, the library and Ask each have their own screen.
  */
 export function IntelligenceContent({ overview, accounts, onSelectAccount, onSync, syncing, onExplain }: IntelligenceContentProps) {
   const router = useRouter();
-  const { width } = useWindowDimensions();
   const accountId = overview.account.id;
-  const version = overview.account.lastSyncedAt;
   const platformName = platformOption(overview.account.platform).name;
-
-  // Real recent posts power the hero chart, the recent rail and the archive mosaic.
-  const recentFetcher = useCallback(
-    () => fetchMediaPage({ accountId, sort: 'recent', limit: RECENT_COUNT }),
-    [accountId, version], // version: refetch after a sync
-  );
-  const { state: recentState } = useApiResource(recentFetcher);
-  const recent = recentState.status === 'success' ? recentState.data.items : null;
+  const [tier, setTier] = useState<TierFilter>('top');
+  const [format, setFormat] = useState<ContentFormat | null>(null);
+  const { tiers, archive } = overview;
 
   useEffect(() => {
     intelligenceSession.setOverview(overview);
   }, [overview]);
 
-  const openPost = (id: string, analyze: boolean) =>
-    router.push({ pathname: '/intelligence/post/[id]', params: { id, accountId, ...(analyze && { analyze: '1' }) } });
-  const openLibrary = (params: Record<string, string> = {}) => router.push({ pathname: '/intelligence/library', params: { accountId, ...params } });
-  const openFormats = () => router.push({ pathname: '/intelligence/formats', params: { accountId } });
-
-  const featureWidth = Math.min(width * 0.64, 300);
-  const analyzed = overview.baseline.sampleSize;
+  const open = (pathname: '/intelligence/formats' | '/intelligence/trends' | '/intelligence/library') => router.push({ pathname, params: { accountId } });
 
   return (
     <View>
-      <AccountHeader account={overview.account} accounts={accounts} syncedPosts={overview.archive.syncedCount} onSelect={onSelectAccount} />
+      <AccountHeader account={overview.account} accounts={accounts} syncedPosts={archive.syncedCount} onSelect={onSelectAccount} />
 
       {overview.account.status !== 'connected' ? (
         <View className="mb-xl flex-row items-center rounded-2xl bg-warning-light p-lg" accessibilityRole="alert">
@@ -80,7 +66,7 @@ export function IntelligenceContent({ overview, accounts, onSelectAccount, onSyn
         </View>
       ) : null}
 
-      {overview.archive.syncedCount === 0 ? (
+      {archive.syncedCount === 0 ? (
         <EmptyState
           icon="cloud-download-outline"
           title={`No ${platformName} content has been synchronized yet`}
@@ -89,95 +75,82 @@ export function IntelligenceContent({ overview, accounts, onSelectAccount, onSyn
         />
       ) : (
         <>
-          <FadeIn index={0}>
-            <PerformanceHero overview={overview} recent={recent} onExplain={onExplain} />
-          </FadeIn>
-
-          <FadeIn index={1}>
-            <AiInsightsSection
-              accountId={accountId}
-              aiConfigured={overview.aiConfigured}
-              rankingSufficient={overview.ranking.sufficient}
-              minimumPosts={overview.ranking.minimumRequired}
-              analyzedPosts={analyzed}
-              version={version}
-            />
-          </FadeIn>
-
-          <FadeIn index={2} className="mb-2xl">
-            <SectionTitle
-              eyebrow="What’s working"
-              eyebrowIcon="trending-up"
-              eyebrowColor={colors.success}
-              title="Your top content"
-              description="Ranked by real interactions against your account average."
-              action={overview.ranking.working.length > 0 ? { label: 'All', onPress: () => openLibrary({ sort: 'interactions', performance: 'above' }) } : undefined}
-            />
-            {!overview.ranking.sufficient ? (
-              <Text className="text-label font-normal text-neutral-500">
-                More content history needed — rankings appear at {overview.ranking.minimumRequired} posts with engagement data ({analyzed} so far).
-              </Text>
-            ) : overview.ranking.working.length === 0 ? (
-              <Text className="text-label font-normal text-neutral-500">No post is above your account average yet.</Text>
-            ) : (
-              <MediaRail
-                items={overview.ranking.working.map(tileFromPost)}
-                width={featureWidth}
-                aspect={1.25}
-                showDelta
-                cta="Why it worked"
-                onPress={(item) => openPost(item.id, true)}
+          {/* Summary: what was analyzed */}
+          <FadeIn className="mb-2xl">
+            <Text className="text-display text-navy" accessibilityRole="header">
+              {archive.syncedCount.toLocaleString()} posts analyzed
+            </Text>
+            <View className="mt-lg">
+              <MetricStrip
+                metrics={[
+                  { label: archive.viewsAvailableCount < archive.syncedCount ? `Views (${archive.viewsAvailableCount} posts)` : 'Views', value: archive.totalViews === null ? null : formatCompactNumber(archive.totalViews) },
+                  { label: 'Interactions', value: archive.totalInteractions === null ? null : formatCompactNumber(archive.totalInteractions) },
+                  { label: 'Typical post', value: tiers.typicalInteractions === null ? null : formatCompactNumber(tiers.typicalInteractions) },
+                ]}
               />
-            )}
+            </View>
+            <Pressable onPress={onExplain} accessibilityRole="button" className="mt-sm min-h-11 justify-center self-center">
+              <Text className="text-caption text-neutral-500">
+                Typical post = the middle of your posts by interactions. <Text className="font-semibold text-primary">How it’s measured</Text>
+              </Text>
+            </Pressable>
           </FadeIn>
 
-          <FadeIn index={3}>
-            <NeedsAttention
-              posts={overview.ranking.attention}
-              baseline={overview.baseline.avgInteractions}
-              median={overview.baseline.medianInteractions}
-              sufficient={overview.ranking.sufficient}
-              onOpen={(post) => openPost(post.id, true)}
-              onSeeAll={() => openLibrary({ performance: 'below' })}
-            />
-          </FadeIn>
-
-          <FadeIn index={4} className="mb-2xl">
-            <SectionTitle eyebrow="Recent content" eyebrowIcon="images-outline" title="Latest posts" action={{ label: 'Library', onPress: () => openLibrary() }} />
-            {recent ? (
-              <MediaRail items={recent.map(tileFromPost)} width={132} aspect={1.25} showDate onPress={(item) => openPost(item.id, false)} />
-            ) : recentState.status === 'loading' ? (
-              <View className="flex-row gap-md">
-                {[0, 1, 2].map((i) => (
-                  <Skeleton key={i} className="h-40 w-32 rounded-2xl" />
-                ))}
-              </View>
+          {/* Top / Moderate / Low */}
+          <FadeIn index={1} className="mb-2xl">
+            {!tiers.sufficient ? (
+              <AiQuietState
+                title="More content history needed"
+                message={`Top, moderate and low content appear once ${tiers.minimumRequired} posts have engagement data. ${overview.baseline.sampleSize} so far.`}
+                progress={overview.baseline.sampleSize / Math.max(tiers.minimumRequired, 1)}
+              />
             ) : (
-              <Text className="text-label font-normal text-neutral-500">Recent posts couldn’t be loaded. Pull to refresh.</Text>
+              <>
+                <SegmentedControl segments={TIER_ORDER.map((value) => ({ value, label: TIER_COPY[value].label }))} value={tier} onChange={setTier} />
+                <Text className="mb-md mt-lg text-heading text-navy" accessibilityRole="header">
+                  {TIER_COPY[tier].title}
+                </Text>
+                <Text className="-mt-sm mb-md text-label font-normal text-neutral-500">
+                  {tiers.counts[tier].toLocaleString()} {tiers.counts[tier] === 1 ? 'post' : 'posts'} · {TIER_COPY[tier].subtitle}
+                  {tiers.typicalInteractions !== null ? ` Your typical post gets ${formatCompactNumber(tiers.typicalInteractions)} interactions.` : ''}
+                </Text>
+                {archive.formatCounts.length > 1 ? (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} className="-mx-xl mb-lg" contentContainerClassName="px-xl">
+                    {[null, ...archive.formatCounts.map((f) => f.format)].map((option) => {
+                      const selected = option === format;
+                      return (
+                        <Pressable
+                          key={option ?? 'all'}
+                          onPress={() => setFormat(option)}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected }}
+                          className={`mr-sm min-h-10 flex-row items-center justify-center rounded-full px-lg ${selected ? 'bg-navy' : 'bg-neutral-100'}`}
+                        >
+                          {option ? <View className="mr-xs h-2 w-2 rounded-full" style={{ backgroundColor: FORMAT_LABELS[option].color }} /> : null}
+                          <Text className={`text-label ${selected ? 'font-semibold text-white' : 'text-navy'}`}>{option ? FORMAT_LABELS[option].plural : 'All'}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                ) : null}
+                <TierList accountId={accountId} tier={tier} format={format} version={overview.account.lastSyncedAt} />
+              </>
             )}
           </FadeIn>
 
-          {overview.formats.length > 0 ? (
-            <FadeIn index={5} className="mb-2xl">
-              <SectionTitle eyebrow="Format patterns" eyebrowIcon="layers-outline" eyebrowColor={colors.magenta} title="What format wins" action={{ label: 'Details', onPress: openFormats }} />
-              <FormatMix counts={overview.archive.formatCounts} />
-              <View className="mt-md">
-                <FormatComparison formats={overview.formats} onPressFormat={openFormats} />
-              </View>
-            </FadeIn>
-          ) : null}
-
-          <FadeIn index={6}>
-            <TimingSection timing={overview.timing} onOpenPlanner={() => router.navigate('/planner')} />
+          {/* Deeper questions, each with one home */}
+          <FadeIn index={2} className="mb-2xl">
+            <Text className="mb-sm px-xs text-caption font-semibold uppercase tracking-wide text-neutral-500">Go deeper</Text>
+            <View className="overflow-hidden rounded-2xl bg-neutral-50">
+              <ListRow icon="layers-outline" label="Which formats work best" onPress={() => open('/intelligence/formats')} />
+              <Divider inset />
+              <ListRow icon="trending-up-outline" label="Patterns in your content" onPress={() => open('/intelligence/trends')} />
+              <Divider inset />
+              <ListRow icon="chatbubble-ellipses-outline" label="Ask Media Navigator" onPress={() => router.push({ pathname: '/intelligence/ask', params: { accountId } })} />
+              <Divider inset />
+              <ListRow icon="grid-outline" label={`All ${archive.syncedCount.toLocaleString()} posts`} onPress={() => open('/intelligence/library')} />
+            </View>
           </FadeIn>
-
-          <AskBand
-            aiConfigured={overview.aiConfigured}
-            onAsk={(question) => router.push({ pathname: '/intelligence/ask', params: { accountId, ...(question && { q: question }) } })}
-            platformName={platformName}
-          />
-
-          <ArchiveSection archive={overview.archive} recent={recent} onOpen={() => openLibrary()} platformName={platformName} />
 
           {overview.lastSyncRun?.status === 'failed' ? (
             <Text className="mb-sm text-center text-caption text-danger">Last sync failed: {overview.lastSyncRun.errorMessage ?? 'Unknown error'}</Text>

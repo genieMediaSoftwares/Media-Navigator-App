@@ -24,7 +24,7 @@ export function plannerRouter(): Router {
 		if (!account) throw new HttpError(501, 'FEATURE_NOT_AVAILABLE', 'Connect a social account to unlock personalized planning.');
 
 		const timeZone = resolveTimeZone(queryParam(req, 'tz') ?? (await getPreferences(userId)).timeZone);
-		const { timing, baseline } = await loadIntelligenceSnapshot(account, timeZone, req.now);
+		const { timing, baseline, tiers } = await loadIntelligenceSnapshot(account, timeZone, req.now);
 		const name = platformName(account.platform);
 		ok(res, {
 			timezone: timing.timezone,
@@ -43,6 +43,8 @@ export function plannerRouter(): Router {
 					baseline.avgInteractions !== null ? ` (account average ${baseline.avgInteractions})` : ''
 				}.`,
 			})),
+			/** Measured comparison points for the windows above. */
+			baseline: { avgInteractions: baseline.avgInteractions, typicalInteractions: tiers.typicalInteractions },
 			account: accountSummary(account),
 			accounts: accounts.map(accountSummary),
 			scheduling: {

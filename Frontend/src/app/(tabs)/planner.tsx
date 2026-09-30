@@ -46,7 +46,7 @@ export default function PlannerScreen() {
   const accounts = loaded?.accounts ?? [];
 
   return (
-    <TabScreen title="Publishing Planner" subtitle="Find the best times to publish." refreshing={refreshing} onRefresh={refresh}>
+    <TabScreen title="Publishing Planner" subtitle="Find the best times to publish from your own history." refreshing={refreshing} onRefresh={refresh}>
       {accounts.length > 1 ? <AccountChips accounts={accounts} selectedId={loaded?.account?.id ?? null} onSelect={setAccountId} /> : null}
       <AsyncContent
         state={state}

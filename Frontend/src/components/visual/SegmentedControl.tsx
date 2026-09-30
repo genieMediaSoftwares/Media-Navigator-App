@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { LayoutChangeEvent, Pressable, Text, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
+import { colors } from '@/constants/colors';
+
 interface SegmentedControlProps<T extends string> {
   segments: readonly { value: T; label: string }[];
   value: T;
@@ -29,8 +31,7 @@ export function SegmentedControl<T extends string>({ segments, value, onChange }
     >
       {segmentWidth > 0 ? (
         <Animated.View
-          className="absolute bottom-xs left-xs top-xs rounded-full bg-white"
-          style={[{ width: segmentWidth, shadowColor: '#0B1F44', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 2 }, thumbStyle]}
+          style={[{ position: 'absolute', top: 4, bottom: 4, left: 4, borderRadius: 999, backgroundColor: colors.white, width: segmentWidth, shadowColor: '#0B1F44', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 2 }, thumbStyle]}
         />
       ) : null}
       {segments.map((segment) => {
