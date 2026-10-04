@@ -50,6 +50,6 @@ const userSchema = new Schema<UserDoc>(
 	{ collection: 'users', versionKey: false },
 );
 
-userSchema.index({ email: 1 }, { unique: true, name: 'users_email_unique' });
+userSchema.index({ email: 1 }, { unique: true, name: 'email_1' });
 
 export const User = model<UserDoc>('User', userSchema);
