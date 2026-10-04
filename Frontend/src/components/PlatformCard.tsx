@@ -57,7 +57,9 @@ export function PlatformCard({
             </Text>
           </View>
         ) : connection === null ? (
-          <Text className="mt-xs text-caption text-neutral-500">Not connected</Text>
+          <Text className="mt-xs text-caption text-neutral-500">
+            Not connected · {platform.id === 'facebook' ? 'Page' : platform.id === 'youtube' ? 'Channel' : platform.id === 'linkedin' ? 'Organization' : 'Account'}
+          </Text>
         ) : null}
       </View>
 

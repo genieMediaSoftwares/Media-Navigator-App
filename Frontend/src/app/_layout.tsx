@@ -67,6 +67,18 @@ function RootNavigator() {
         <Stack.Screen name="intelligence/insight/[id]" options={{ ...pushedScreenOptions, title: 'AI insight' }} />
         <Stack.Screen name="intelligence/formats" options={{ ...pushedScreenOptions, title: 'Formats' }} />
         <Stack.Screen name="intelligence/trends" options={{ ...pushedScreenOptions, title: 'Patterns' }} />
+        {/* Platform-specific routes */}
+        <Stack.Screen name="platforms/[platform]/index" options={{ ...pushedScreenOptions, title: 'Overview' }} />
+        <Stack.Screen name="platforms/[platform]/connect" options={{ ...pushedScreenOptions, title: 'Connect' }} />
+        <Stack.Screen name="platforms/[platform]/select" options={{ ...pushedScreenOptions, title: 'Select Account' }} />
+        <Stack.Screen name="platforms/[platform]/intelligence" options={{ ...pushedScreenOptions, title: 'Intelligence' }} />
+        <Stack.Screen name="platforms/[platform]/top" options={{ ...pushedScreenOptions, title: 'Top Content' }} />
+        <Stack.Screen name="platforms/[platform]/moderate" options={{ ...pushedScreenOptions, title: 'Moderate Content' }} />
+        <Stack.Screen name="platforms/[platform]/low" options={{ ...pushedScreenOptions, title: 'Low Content' }} />
+        <Stack.Screen name="platforms/[platform]/detail" options={{ ...pushedScreenOptions, title: 'Content Detail' }} />
+        <Stack.Screen name="platforms/[platform]/formats" options={{ ...pushedScreenOptions, title: 'Formats' }} />
+        <Stack.Screen name="platforms/[platform]/patterns" options={{ ...pushedScreenOptions, title: 'Patterns' }} />
+        <Stack.Screen name="platforms/[platform]/content" options={{ ...pushedScreenOptions, title: 'Content Library' }} />
         {/* Ask renders its own header so the composer can sit exactly above the keyboard. */}
         <Stack.Screen name="intelligence/ask" options={{ headerShown: false }} />
       </Stack.Protected>

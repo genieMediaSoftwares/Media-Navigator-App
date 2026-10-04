@@ -272,6 +272,15 @@ export const linkedinProvider: SocialProvider = {
 		);
 		return listOrganizations(credentials, fetchImpl);
 	},
+	async optionsFromAccessToken(accessToken, fetchImpl = fetch) {
+		const credentials: PlatformCredentials = {
+			accessToken,
+			refreshToken: null,
+			expiresAt: null,
+			scope: SCOPES.join(' '),
+		};
+		return listOrganizations(credentials, fetchImpl);
+	},
 	sync(account, now, fetchImpl = fetch) {
 		return runProviderSync(account, now, fetchImpl, {
 			async refresh(credentials, impl) {

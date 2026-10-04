@@ -230,6 +230,27 @@ export const youtubeProvider: SocialProvider = {
 			}),
 		);
 	},
+	async optionsFromAccessToken(accessToken, fetchImpl = fetch) {
+		const credentials: PlatformCredentials = {
+			accessToken,
+			refreshToken: null,
+			expiresAt: null,
+			scope: SCOPES.join(' '),
+		};
+		const channels = (await listChannels(credentials, fetchImpl)) ?? [];
+		if (channels.length === 0) {
+			throw new HttpError(400, 'ELIGIBILITY_ERROR', 'This Google account has no YouTube channel.');
+		}
+		return channels.map(
+			(channel): ConnectOption => ({
+				platformAccountId: channel.id,
+				accountName: channel.snippet?.title ?? null,
+				accountUsername: channel.snippet?.customUrl?.replace(/^@/, '') ?? channel.snippet?.title ?? channel.id,
+				profilePictureUrl: thumbnail(channel.snippet?.thumbnails),
+				credentials,
+			}),
+		);
+	},
 	sync(account, now, fetchImpl = fetch) {
 		return runProviderSync(account, now, fetchImpl, {
 			async refresh(credentials, impl) {

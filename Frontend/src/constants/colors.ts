@@ -62,6 +62,7 @@ export const colors = {
   warningLight: palette.warning.light,
   successLight: palette.success.light,
   danger: palette.danger.DEFAULT,
+  dangerLight: palette.danger.light,
   info: palette.info.DEFAULT,
   /** Modal backdrop: navy at 45% opacity. */
   backdrop: 'rgba(11, 31, 68, 0.45)',

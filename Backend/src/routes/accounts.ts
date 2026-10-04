@@ -82,7 +82,7 @@ export function accountsRouter(): Router {
 		if (platform === 'instagram' && accessToken === '') {
 			throw new HttpError(400, 'VALIDATION_ERROR', 'Paste a valid Meta Graph API access token.', { accessToken: 'Access token is required.' });
 		}
-		if (accessToken === '' || platform === 'youtube' || platform === 'linkedin') {
+		if (accessToken === '') {
 			const returnUrl = stringField(body, 'returnUrl') || null;
 			ok(res, { authorizationUrl: await startAuthorization(auth.user.id, platform, returnUrl, req.now) });
 			return;
