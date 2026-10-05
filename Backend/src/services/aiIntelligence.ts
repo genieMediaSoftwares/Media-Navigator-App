@@ -12,7 +12,6 @@ import { platformName } from './platforms';
 // at evidence by post ID / format; the *supporting numbers* shown to the user are always rebuilt
 // here from stored data, so the model cannot put invented figures into "Supporting data".
 
-const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const ASK_HISTORY_LIMIT = 10;
 const CAPTION_CHARS = 280;
 const MAX_CONTEXT_POSTS = 120;
@@ -212,7 +211,7 @@ async function cached<T>(
 	const value = await produce();
 	await AiCache.updateOne(
 		{ _id: key },
-		{ $set: { userId: owner.userId, connectedAccountId: owner.accountId, value, createdAt: new Date(now), expiresAt: new Date(now + CACHE_TTL_MS) } },
+		{ $set: { userId: owner.userId, connectedAccountId: owner.accountId, value, createdAt: new Date(now), expiresAt: new Date(now + getConfig().AI_CACHE_TTL_MS) } },
 		{ upsert: true },
 	);
 	return { value, fresh: true };

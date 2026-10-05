@@ -9,7 +9,7 @@ export interface InstagramAccountInfo {
 }
 
 export function getMetaApiVersion(): string {
-	return getConfig().META_API_VERSION || 'v21.0';
+	return getConfig().META_API_VERSION;
 }
 
 export function isInstagramOAuthConfigured(): boolean {
@@ -19,13 +19,14 @@ export function isInstagramOAuthConfigured(): boolean {
 
 /** Constructs the official Meta OAuth authorization URL for the Instagram Graph API. */
 export function buildInstagramAuthorizationUrl(state: string): string {
-	const { META_APP_ID: appId, META_REDIRECT_URI: redirectUri } = getConfig();
+	const config = getConfig();
+	const { META_APP_ID: appId, META_REDIRECT_URI: redirectUri } = config;
 	if (!appId || !redirectUri) {
 		throw new HttpError(503, 'CONFIG_ERROR', "Instagram connection isn't configured yet. Missing META_APP_ID or META_REDIRECT_URI.");
 	}
 
 	const scopes = ['instagram_basic', 'instagram_manage_insights', 'pages_show_list', 'pages_read_engagement'].join(',');
-	const url = new URL(`https://www.facebook.com/${getMetaApiVersion()}/dialog/oauth`);
+	const url = new URL(`${config.FACEBOOK_OAUTH_BASE_URL}/${getMetaApiVersion()}/dialog/oauth`);
 	url.searchParams.set('client_id', appId);
 	url.searchParams.set('redirect_uri', redirectUri);
 	url.searchParams.set('response_type', 'code');
@@ -43,14 +44,15 @@ export async function exchangeMetaCode(
 	redirectUri: string | undefined,
 	fetchImpl: typeof fetch = fetch,
 ): Promise<{ accessToken: string; expiresAt: number | null }> {
-	const { META_APP_ID: appId, META_APP_SECRET: appSecret } = getConfig();
+	const config = getConfig();
+	const { META_APP_ID: appId, META_APP_SECRET: appSecret } = config;
 	if (!appId || !appSecret || !redirectUri) {
 		throw new HttpError(503, 'CONFIG_ERROR', "Meta connection isn't configured yet. Server configuration is incomplete.");
 	}
 	const version = getMetaApiVersion();
 
 	// 1. Authorization code → short-lived user token
-	const tokenUrl = new URL(`https://graph.facebook.com/${version}/oauth/access_token`);
+	const tokenUrl = new URL(`${config.META_GRAPH_BASE_URL}/${version}/oauth/access_token`);
 	tokenUrl.searchParams.set('client_id', appId);
 	tokenUrl.searchParams.set('client_secret', appSecret);
 	tokenUrl.searchParams.set('redirect_uri', redirectUri);
@@ -65,7 +67,7 @@ export async function exchangeMetaCode(
 	const shortLivedToken = shortLivedData.access_token;
 
 	// 2. Short-lived → long-lived user token (~60 days)
-	const longLivedUrl = new URL(`https://graph.facebook.com/${version}/oauth/access_token`);
+	const longLivedUrl = new URL(`${config.META_GRAPH_BASE_URL}/${version}/oauth/access_token`);
 	longLivedUrl.searchParams.set('grant_type', 'fb_exchange_token');
 	longLivedUrl.searchParams.set('client_id', appId);
 	longLivedUrl.searchParams.set('client_secret', appSecret);
@@ -90,11 +92,12 @@ export async function fetchInstagramAccountInfo(accessToken: string, fetchImpl: 
 		throw new HttpError(400, 'VALIDATION_ERROR', 'Paste a valid Meta Graph API access token.');
 	}
 
+	const config = getConfig();
 	const version = getMetaApiVersion();
 	const cleanToken = accessToken.trim();
 
 	// The user's Facebook Pages, to find the linked Instagram Business/Creator account.
-	const accountsUrl = `https://graph.facebook.com/${version}/me/accounts?fields=id,name,instagram_business_account{id,username,name,profile_picture_url}&access_token=${encodeURIComponent(cleanToken)}`;
+	const accountsUrl = `${config.META_GRAPH_BASE_URL}/${version}/me/accounts?fields=id,name,instagram_business_account{id,username,name,profile_picture_url}&access_token=${encodeURIComponent(cleanToken)}`;
 	const accountsRes = await fetchImpl(accountsUrl);
 	const accountsData = (await accountsRes.json()) as {
 		data?: Array<{
@@ -120,7 +123,7 @@ export async function fetchInstagramAccountInfo(accessToken: string, fetchImpl: 
 	}
 
 	// Fallback: Instagram API with Instagram Login (graph.instagram.com).
-	const meUrl = `https://graph.instagram.com/${version}/me?fields=id,username,name,account_type,profile_picture_url&access_token=${encodeURIComponent(cleanToken)}`;
+	const meUrl = `${config.INSTAGRAM_GRAPH_BASE_URL}/${version}/me?fields=id,username,name,account_type,profile_picture_url&access_token=${encodeURIComponent(cleanToken)}`;
 	const meRes = await fetchImpl(meUrl);
 	const meData = (await meRes.json()) as {
 		id?: string;

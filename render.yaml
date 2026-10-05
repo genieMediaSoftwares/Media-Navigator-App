@@ -20,6 +20,10 @@ services:
         value: production
       - key: NODE_VERSION
         value: "24"
+      - key: PORT
+        value: "10000"
+      - key: HOST
+        value: "0.0.0.0"
       # Render terminates TLS in front of the service: one proxy hop.
       - key: TRUST_PROXY
         value: "1"
@@ -31,12 +35,22 @@ services:
         sync: false
       - key: GEMINI_MODEL
         value: gemini-3.5-flash
+      - key: GEMINI_API_BASE_URL
+        value: https://generativelanguage.googleapis.com
+      - key: GEMINI_REQUEST_TIMEOUT_MS
+        value: "30000"
       - key: META_APP_ID
         sync: false
       - key: META_APP_SECRET
         sync: false
       - key: META_API_VERSION
         value: v21.0
+      - key: META_GRAPH_BASE_URL
+        value: https://graph.facebook.com
+      - key: FACEBOOK_OAUTH_BASE_URL
+        value: https://www.facebook.com
+      - key: INSTAGRAM_GRAPH_BASE_URL
+        value: https://graph.instagram.com
       - key: META_REDIRECT_URI
         sync: false
       - key: FACEBOOK_REDIRECT_URI
@@ -47,12 +61,26 @@ services:
         sync: false
       - key: GOOGLE_REDIRECT_URI
         sync: false
+      - key: YOUTUBE_DATA_API_BASE_URL
+        value: https://www.googleapis.com/youtube/v3
+      - key: YOUTUBE_ANALYTICS_API_BASE_URL
+        value: https://youtubeanalytics.googleapis.com/v2/reports
+      - key: GOOGLE_OAUTH_TOKEN_URL
+        value: https://oauth2.googleapis.com/token
+      - key: GOOGLE_OAUTH_AUTH_URL
+        value: https://accounts.google.com/o/oauth2/v2/auth
       - key: LINKEDIN_CLIENT_ID
         sync: false
       - key: LINKEDIN_CLIENT_SECRET
         sync: false
       - key: LINKEDIN_REDIRECT_URI
         sync: false
+      - key: LINKEDIN_API_VERSION
+        value: "202509"
+      - key: LINKEDIN_API_BASE_URL
+        value: https://api.linkedin.com/rest
+      - key: LINKEDIN_OAUTH_BASE_URL
+        value: https://www.linkedin.com/oauth/v2
       - key: R2_ACCOUNT_ID
         sync: false
       - key: R2_ACCESS_KEY_ID
@@ -68,3 +96,31 @@ services:
         value: ""
       - key: APP_REDIRECT_SCHEMES
         value: medianavigator,exp
+      - key: DEFAULT_RETURN_URL
+        value: medianavigator://oauth/callback
+      - key: HTTP_REQUEST_TIMEOUT_MS
+        value: "20000"
+      - key: MEDIA_PAGE_SIZE
+        value: "25"
+      - key: MAX_MEDIA_PAGES
+        value: "8"
+      - key: FACEBOOK_POSTS_PAGE_SIZE
+        value: "25"
+      - key: FACEBOOK_MAX_POST_PAGES
+        value: "8"
+      - key: YOUTUBE_MAX_VIDEOS
+        value: "200"
+      - key: LINKEDIN_MAX_POSTS
+        value: "100"
+      - key: OAUTH_STATE_TTL_MS
+        value: "600000"
+      - key: PENDING_CONNECTION_TTL_MS
+        value: "900000"
+      - key: AI_CACHE_TTL_MS
+        value: "604800000"
+      - key: AUTH_RATE_LIMIT
+        value: "30"
+      - key: API_RATE_LIMIT
+        value: "300"
+      - key: AI_REQUESTS_PER_HOUR
+        value: "40"

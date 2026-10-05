@@ -12,14 +12,12 @@ import { ConnectOption, ProviderApiError, SocialProvider } from './types';
 // do not expire). Reactions are stored as `likes`; a metric Meta does not return stays null.
 
 const SCOPES = ['pages_show_list', 'pages_read_engagement', 'read_insights'];
-const POSTS_PAGE_SIZE = 25;
-const MAX_POST_PAGES = 8;
 const POST_FIELDS =
 	'id,message,created_time,permalink_url,full_picture,status_type,attachments{media_type,type},reactions.summary(total_count).limit(0),comments.summary(total_count).limit(0),shares';
 /** Post insight metric sets, richest first (Meta rejects the whole page if one metric is unsupported). */
 const POST_INSIGHT_SETS: readonly string[][] = [['post_impressions_unique']];
 
-const graph = (path: string) => `https://graph.facebook.com/${getMetaApiVersion()}/${path}`;
+const graph = (path: string) => `${getConfig().META_GRAPH_BASE_URL}/${getMetaApiVersion()}/${path}`;
 
 interface PagesResponse {
 	data?: Array<{ id: string; name?: string; username?: string; access_token?: string; picture?: { data?: { url?: string } } }>;
@@ -106,6 +104,7 @@ function toContent(post: NonNullable<PostsResponse['data']>[number]): ContentInp
 }
 
 async function pullPage(pageId: string, pageToken: string, fetchImpl: typeof fetch): Promise<PulledData> {
+	const config = getConfig();
 	const token = encodeURIComponent(pageToken);
 	const page = await requestJson<{
 		id: string;
@@ -121,8 +120,8 @@ async function pullPage(pageId: string, pageToken: string, fetchImpl: typeof fet
 
 	const content: ContentInput[] = [];
 	let tier = 0;
-	let next: string | null = `${graph(`${pageId}/published_posts`)}?limit=${POSTS_PAGE_SIZE}&access_token=${token}`;
-	for (let pageCount = 0; next && pageCount < MAX_POST_PAGES; pageCount++) {
+	let next: string | null = `${graph(`${pageId}/published_posts`)}?limit=${config.FACEBOOK_POSTS_PAGE_SIZE}&access_token=${token}`;
+	for (let pageCount = 0; next && pageCount < config.FACEBOOK_MAX_POST_PAGES; pageCount++) {
 		let response: PostsResponse | null = null;
 		for (; tier <= POST_INSIGHT_SETS.length && !response; tier++) {
 			const url: URL = new URL(next);
@@ -184,7 +183,7 @@ export const facebookProvider: SocialProvider = {
 	},
 	authorizationUrl(state) {
 		const config = getConfig();
-		const url = new URL(`https://www.facebook.com/${getMetaApiVersion()}/dialog/oauth`);
+		const url = new URL(`${config.FACEBOOK_OAUTH_BASE_URL}/${getMetaApiVersion()}/dialog/oauth`);
 		url.searchParams.set('client_id', config.META_APP_ID ?? '');
 		url.searchParams.set('redirect_uri', config.FACEBOOK_REDIRECT_URI ?? '');
 		url.searchParams.set('response_type', 'code');

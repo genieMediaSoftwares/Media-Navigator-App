@@ -1,3 +1,4 @@
+import { getConfig } from '../config/env';
 import {
 	ConnectedAccountRow,
 	deleteConnectedAccount,
@@ -16,8 +17,6 @@ import { appRedirect, consumeOAuthState, createOAuthState, createPkcePair, resol
 import { platformName } from './platforms';
 import { ConnectOption, getProvider } from './providers';
 import { getAllContentByAccountId } from '../db/content';
-
-const PENDING_TTL_MS = 15 * 60 * 1000;
 
 export interface AccountSummary {
 	id: string;
@@ -164,7 +163,7 @@ async function createPendingSelection(userId: string, platform: Platform, option
 		platform,
 		options: options.map(({ credentials: _c, ...option }) => option),
 		grant: await encryptJson(grant),
-		expiresAt: new Date(now + PENDING_TTL_MS),
+		expiresAt: new Date(now + getConfig().PENDING_CONNECTION_TTL_MS),
 	});
 	return { id: doc._id, platform, options: doc.toObject().options, expiresAt: doc.expiresAt.toISOString() };
 }

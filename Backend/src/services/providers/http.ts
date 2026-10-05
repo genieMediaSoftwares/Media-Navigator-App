@@ -1,7 +1,6 @@
+import { getConfig } from '../../config/env';
 import { redactSecrets } from '../../lib/redact';
 import { ProviderApiError, ProviderAuthError } from './types';
-
-const TIMEOUT_MS = 20_000;
 
 export function metricNumber(value: unknown): number | null {
 	if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -21,7 +20,7 @@ export async function requestJson<T>(
 	const { fetchImpl = fetch, authStatuses = [401], ...rest } = init;
 	let response: Response;
 	try {
-		response = await fetchImpl(url, { ...rest, signal: rest.signal ?? AbortSignal.timeout(TIMEOUT_MS) });
+		response = await fetchImpl(url, { ...rest, signal: rest.signal ?? AbortSignal.timeout(getConfig().HTTP_REQUEST_TIMEOUT_MS) });
 	} catch (error) {
 		throw new ProviderApiError(redactSecrets(error instanceof Error ? error.message : 'Network error'), 502);
 	}

@@ -1,3 +1,4 @@
+import { getConfig } from '../config/env';
 import { ConnectedAccountRow, findAccountById, updateAccountStatusAndSynced } from '../db/accounts';
 import {
 	ContentInput,
@@ -66,9 +67,6 @@ export interface InstagramDashboardResponse {
 	} | null;
 }
 
-const MEDIA_PAGE_SIZE = 25;
-/** Up to 200 most recent media items per sync. */
-const MAX_MEDIA_PAGES = 8;
 const MEDIA_FIELDS =
 	'id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count';
 const MEDIA_FIELDS_FALLBACK = 'id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count';
@@ -178,6 +176,7 @@ export async function syncInstagramAccount(
 	now = Date.now(),
 	fetchImpl: typeof fetch = fetch,
 ): Promise<SyncSummary> {
+	const config = getConfig();
 	const accountId = account.id;
 	const userId = account.user_id;
 
@@ -197,12 +196,12 @@ export async function syncInstagramAccount(
 
 	try {
 		// 2. Profile fields
-		let profileUrl = `https://graph.facebook.com/${version}/${account.platform_account_id}?fields=id,username,name,profile_picture_url,followers_count,follows_count,media_count&access_token=${encodeURIComponent(accessToken)}`;
+		let profileUrl = `${config.META_GRAPH_BASE_URL}/${version}/${account.platform_account_id}?fields=id,username,name,profile_picture_url,followers_count,follows_count,media_count&access_token=${encodeURIComponent(accessToken)}`;
 		let profileRes = await fetchImpl(profileUrl);
 
 		if (!profileRes.ok) {
 			// Instagram API with Instagram Login
-			profileUrl = `https://graph.instagram.com/${version}/me?fields=id,username,name,account_type,media_count&access_token=${encodeURIComponent(accessToken)}`;
+			profileUrl = `${config.INSTAGRAM_GRAPH_BASE_URL}/${version}/me?fields=id,username,name,account_type,media_count&access_token=${encodeURIComponent(accessToken)}`;
 			profileRes = await fetchImpl(profileUrl);
 		}
 
@@ -248,7 +247,7 @@ export async function syncInstagramAccount(
 
 		// 3. Account-level insights where supported (impressions, reach)
 		try {
-			const insightsUrl = `https://graph.facebook.com/${version}/${account.platform_account_id}/insights?metric=impressions,reach&period=day&access_token=${encodeURIComponent(accessToken)}`;
+			const insightsUrl = `${config.META_GRAPH_BASE_URL}/${version}/${account.platform_account_id}/insights?metric=impressions,reach&period=day&access_token=${encodeURIComponent(accessToken)}`;
 			const insightsRes = await fetchImpl(insightsUrl);
 			if (insightsRes.ok) {
 				const insightsData = (await insightsRes.json()) as {
@@ -278,12 +277,12 @@ export async function syncInstagramAccount(
 
 		// 4. Media with cursor pagination. Per-media insights are requested inline through field
 		// expansion (no extra request per post); see fetchMediaPage for the fallback chain.
-		let nextUrl: string | null = `https://graph.facebook.com/${version}/${account.platform_account_id}/media?limit=${MEDIA_PAGE_SIZE}&access_token=${encodeURIComponent(accessToken)}`;
+		let nextUrl: string | null = `${config.META_GRAPH_BASE_URL}/${version}/${account.platform_account_id}/media?limit=${config.MEDIA_PAGE_SIZE}&access_token=${encodeURIComponent(accessToken)}`;
 		let pageCount = 0;
 		let insightTier = 0;
 		let usingFallbackApi = false;
 
-		while (nextUrl && pageCount < MAX_MEDIA_PAGES) {
+		while (nextUrl && pageCount < config.MAX_MEDIA_PAGES) {
 			pageCount++;
 			let page: { data: MediaPageResponse; tier: number } | null = usingFallbackApi
 				? await fetchPlainPage(nextUrl, fetchImpl)
@@ -293,7 +292,7 @@ export async function syncInstagramAccount(
 				// Instagram Login API (graph.instagram.com); its paging URLs are followed as-is.
 				usingFallbackApi = true;
 				page = await fetchPlainPage(
-					`https://graph.instagram.com/${version}/me/media?fields=${MEDIA_FIELDS_FALLBACK}&limit=${MEDIA_PAGE_SIZE}&access_token=${encodeURIComponent(accessToken)}`,
+					`${config.INSTAGRAM_GRAPH_BASE_URL}/${version}/me/media?fields=${MEDIA_FIELDS_FALLBACK}&limit=${config.MEDIA_PAGE_SIZE}&access_token=${encodeURIComponent(accessToken)}`,
 					fetchImpl,
 				);
 			}

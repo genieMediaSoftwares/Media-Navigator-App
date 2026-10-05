@@ -5,9 +5,6 @@ import { HttpError } from '../lib/http';
 // is sent as a header (never in a URL, log line, or response). Callers pass sanitized analytics
 // only: no Meta tokens, credential references, session tokens or other secrets.
 
-const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash';
-const GEMINI_TIMEOUT_MS = 30_000;
-
 /** OpenAPI-subset schema accepted by Gemini's `responseSchema`. */
 export interface GeminiSchema {
 	type: 'OBJECT' | 'ARRAY' | 'STRING' | 'NUMBER' | 'INTEGER' | 'BOOLEAN';
@@ -42,13 +39,13 @@ export async function generateStructured(
 	if (!isAiConfigured()) throw aiUnavailable();
 
 	const config = getConfig();
-	const model = config.GEMINI_MODEL.trim() !== '' ? config.GEMINI_MODEL.trim() : DEFAULT_GEMINI_MODEL;
+	const model = config.GEMINI_MODEL.trim();
 	let response: Response;
 	try {
-		response = await fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+		response = await fetchImpl(`${config.GEMINI_API_BASE_URL}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json', 'x-goog-api-key': config.GEMINI_API_KEY as string },
-			signal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
+			signal: AbortSignal.timeout(config.GEMINI_REQUEST_TIMEOUT_MS),
 			body: JSON.stringify({
 				systemInstruction: { parts: [{ text: request.systemInstruction }] },
 				contents: [{ role: 'user', parts: [{ text: request.prompt }] }],

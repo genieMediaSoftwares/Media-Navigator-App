@@ -10,23 +10,27 @@ const optionalString = z
 	.transform((value) => (value && value.trim() !== '' ? value.trim() : undefined));
 
 const schema = z.object({
-	NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-	PORT: z.coerce.number().int().positive().default(8787),
-	HOST: z.string().default('0.0.0.0'),
+	NODE_ENV: z.enum(['development', 'test', 'production'], {
+		message: 'NODE_ENV is required and must be development, test, or production.',
+	}),
+	PORT: z.coerce.number().int().positive({ message: 'PORT is required and must be a positive integer.' }),
+	HOST: z.string().min(1, 'HOST is required.'),
 
 	/** Local: mongodb://127.0.0.1:27017/media_navigator. Production: a remotely reachable deployment (e.g. Atlas). */
 	MONGODB_URI: z.string().min(1, 'MONGODB_URI is required.'),
 
 	/** Comma-separated browser origins (Expo web only; native apps send no Origin). Empty = none. */
-	CORS_ALLOWED_ORIGINS: z.string().default(''),
+	CORS_ALLOWED_ORIGINS: z.string(),
 	/** Number of proxy hops in front of the app (Render: 1) so req.ip is the client address. */
-	TRUST_PROXY: z.coerce.number().int().min(0).default(0),
+	TRUST_PROXY: z.coerce.number().int().min(0, 'TRUST_PROXY is required.'),
 
 	/** Key material for AES-256-GCM encryption of platform tokens. */
 	ENCRYPTION_KEY: optionalString,
 
 	GEMINI_API_KEY: optionalString,
-	GEMINI_MODEL: z.string().default('gemini-3.5-flash'),
+	GEMINI_MODEL: z.string().min(1, 'GEMINI_MODEL is required.'),
+	GEMINI_API_BASE_URL: z.string().url('GEMINI_API_BASE_URL must be a valid URL.'),
+	GEMINI_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive('GEMINI_REQUEST_TIMEOUT_MS must be a positive integer.'),
 
 	META_APP_ID: optionalString,
 	META_APP_SECRET: optionalString,
@@ -34,20 +38,30 @@ const schema = z.object({
 	META_REDIRECT_URI: optionalString,
 	/** Facebook Pages OAuth callback, e.g. https://api.example.com/api/accounts/callback/facebook */
 	FACEBOOK_REDIRECT_URI: optionalString,
-	META_API_VERSION: z.string().default('v21.0'),
+	META_API_VERSION: z.string().min(1, 'META_API_VERSION is required.'),
+	META_GRAPH_BASE_URL: z.string().url('META_GRAPH_BASE_URL must be a valid URL.'),
+	FACEBOOK_OAUTH_BASE_URL: z.string().url('FACEBOOK_OAUTH_BASE_URL must be a valid URL.'),
+	INSTAGRAM_GRAPH_BASE_URL: z.string().url('INSTAGRAM_GRAPH_BASE_URL must be a valid URL.'),
 
 	GOOGLE_CLIENT_ID: optionalString,
 	GOOGLE_CLIENT_SECRET: optionalString,
 	GOOGLE_REDIRECT_URI: optionalString,
+	YOUTUBE_DATA_API_BASE_URL: z.string().url('YOUTUBE_DATA_API_BASE_URL must be a valid URL.'),
+	YOUTUBE_ANALYTICS_API_BASE_URL: z.string().url('YOUTUBE_ANALYTICS_API_BASE_URL must be a valid URL.'),
+	GOOGLE_OAUTH_TOKEN_URL: z.string().url('GOOGLE_OAUTH_TOKEN_URL must be a valid URL.'),
+	GOOGLE_OAUTH_AUTH_URL: z.string().url('GOOGLE_OAUTH_AUTH_URL must be a valid URL.'),
 
 	LINKEDIN_CLIENT_ID: optionalString,
 	LINKEDIN_CLIENT_SECRET: optionalString,
 	LINKEDIN_REDIRECT_URI: optionalString,
 	/** LinkedIn versioned REST API version header (YYYYMM). */
-	LINKEDIN_API_VERSION: z.string().default('202509'),
+	LINKEDIN_API_VERSION: z.string().min(1, 'LINKEDIN_API_VERSION is required.'),
+	LINKEDIN_API_BASE_URL: z.string().url('LINKEDIN_API_BASE_URL must be a valid URL.'),
+	LINKEDIN_OAUTH_BASE_URL: z.string().url('LINKEDIN_OAUTH_BASE_URL must be a valid URL.'),
 
 	/** Deep-link schemes the OAuth callback may redirect back to. `exp` is Expo Go during development. */
-	APP_REDIRECT_SCHEMES: z.string().default('medianavigator,exp'),
+	APP_REDIRECT_SCHEMES: z.string().min(1, 'APP_REDIRECT_SCHEMES is required.'),
+	DEFAULT_RETURN_URL: z.string().min(1, 'DEFAULT_RETURN_URL is required.'),
 
 	R2_ACCOUNT_ID: optionalString,
 	R2_ACCESS_KEY_ID: optionalString,
@@ -55,12 +69,26 @@ const schema = z.object({
 	R2_BUCKET_NAME: optionalString,
 	R2_ENDPOINT: optionalString,
 
+	/** Network & pagination settings */
+	HTTP_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive('HTTP_REQUEST_TIMEOUT_MS must be a positive integer.'),
+	MEDIA_PAGE_SIZE: z.coerce.number().int().positive('MEDIA_PAGE_SIZE must be a positive integer.'),
+	MAX_MEDIA_PAGES: z.coerce.number().int().positive('MAX_MEDIA_PAGES must be a positive integer.'),
+	FACEBOOK_POSTS_PAGE_SIZE: z.coerce.number().int().positive('FACEBOOK_POSTS_PAGE_SIZE must be a positive integer.'),
+	FACEBOOK_MAX_POST_PAGES: z.coerce.number().int().positive('FACEBOOK_MAX_POST_PAGES must be a positive integer.'),
+	YOUTUBE_MAX_VIDEOS: z.coerce.number().int().positive('YOUTUBE_MAX_VIDEOS must be a positive integer.'),
+	LINKEDIN_MAX_POSTS: z.coerce.number().int().positive('LINKEDIN_MAX_POSTS must be a positive integer.'),
+
+	/** TTL settings */
+	OAUTH_STATE_TTL_MS: z.coerce.number().int().positive('OAUTH_STATE_TTL_MS must be a positive integer.'),
+	PENDING_CONNECTION_TTL_MS: z.coerce.number().int().positive('PENDING_CONNECTION_TTL_MS must be a positive integer.'),
+	AI_CACHE_TTL_MS: z.coerce.number().int().positive('AI_CACHE_TTL_MS must be a positive integer.'),
+
 	/** Requests per 15 minutes per IP for signup/login. */
-	AUTH_RATE_LIMIT: z.coerce.number().int().positive().default(30),
+	AUTH_RATE_LIMIT: z.coerce.number().int().positive('AUTH_RATE_LIMIT must be a positive integer.'),
 	/** Requests per minute per IP across the API. */
-	API_RATE_LIMIT: z.coerce.number().int().positive().default(300),
+	API_RATE_LIMIT: z.coerce.number().int().positive('API_RATE_LIMIT must be a positive integer.'),
 	/** Gemini calls per user per hour. */
-	AI_REQUESTS_PER_HOUR: z.coerce.number().int().positive().default(40),
+	AI_REQUESTS_PER_HOUR: z.coerce.number().int().positive('AI_REQUESTS_PER_HOUR must be a positive integer.'),
 });
 
 export type AppConfig = z.infer<typeof schema>;

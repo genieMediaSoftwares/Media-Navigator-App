@@ -7,7 +7,43 @@ import { decryptJson, encryptJson } from '../src/services/credentials';
 import { toIntelligencePost } from '../src/services/intelligence';
 import { IntelligenceSnapshot } from '../src/services/intelligenceSnapshot';
 
-const BASE = { MONGODB_URI: 'mongodb+srv://cluster.example.net/media_navigator' };
+const BASE = {
+	NODE_ENV: 'development',
+	PORT: '8787',
+	HOST: '0.0.0.0',
+	TRUST_PROXY: '0',
+	MONGODB_URI: 'mongodb+srv://cluster.example.net/media_navigator',
+	CORS_ALLOWED_ORIGINS: '',
+	GEMINI_MODEL: 'gemini-3.5-flash',
+	GEMINI_API_BASE_URL: 'https://generativelanguage.googleapis.com',
+	GEMINI_REQUEST_TIMEOUT_MS: '30000',
+	META_API_VERSION: 'v21.0',
+	META_GRAPH_BASE_URL: 'https://graph.facebook.com',
+	FACEBOOK_OAUTH_BASE_URL: 'https://www.facebook.com',
+	INSTAGRAM_GRAPH_BASE_URL: 'https://graph.instagram.com',
+	LINKEDIN_API_VERSION: '202509',
+	LINKEDIN_API_BASE_URL: 'https://api.linkedin.com/rest',
+	LINKEDIN_OAUTH_BASE_URL: 'https://www.linkedin.com/oauth/v2',
+	YOUTUBE_DATA_API_BASE_URL: 'https://www.googleapis.com/youtube/v3',
+	YOUTUBE_ANALYTICS_API_BASE_URL: 'https://youtubeanalytics.googleapis.com/v2/reports',
+	GOOGLE_OAUTH_TOKEN_URL: 'https://oauth2.googleapis.com/token',
+	GOOGLE_OAUTH_AUTH_URL: 'https://accounts.google.com/o/oauth2/v2/auth',
+	APP_REDIRECT_SCHEMES: 'medianavigator,exp',
+	DEFAULT_RETURN_URL: 'medianavigator://oauth/callback',
+	HTTP_REQUEST_TIMEOUT_MS: '20000',
+	MEDIA_PAGE_SIZE: '25',
+	MAX_MEDIA_PAGES: '8',
+	FACEBOOK_POSTS_PAGE_SIZE: '25',
+	FACEBOOK_MAX_POST_PAGES: '8',
+	YOUTUBE_MAX_VIDEOS: '200',
+	LINKEDIN_MAX_POSTS: '100',
+	OAUTH_STATE_TTL_MS: '600000',
+	PENDING_CONNECTION_TTL_MS: '900000',
+	AI_CACHE_TTL_MS: '604800000',
+	AUTH_RATE_LIMIT: '30',
+	API_RATE_LIMIT: '300',
+	AI_REQUESTS_PER_HOUR: '40',
+};
 
 describe('configuration safety', () => {
 	it('requires MONGODB_URI', () => {
@@ -17,11 +53,11 @@ describe('configuration safety', () => {
 	it('refuses production with a local MongoDB or a weak encryption key, without printing values', () => {
 		expect(() => loadConfig({ ...BASE, NODE_ENV: 'production', ENCRYPTION_KEY: 'short' })).toThrow(/ENCRYPTION_KEY/);
 		const key = 'k'.repeat(40);
-		expect(() => loadConfig({ NODE_ENV: 'production', ENCRYPTION_KEY: key, MONGODB_URI: 'mongodb://127.0.0.1:27017/media_navigator' })).toThrow(
+		expect(() => loadConfig({ ...BASE, NODE_ENV: 'production', ENCRYPTION_KEY: key, MONGODB_URI: 'mongodb://127.0.0.1:27017/media_navigator' })).toThrow(
 			/remotely reachable/,
 		);
 		try {
-			loadConfig({ NODE_ENV: 'production', ENCRYPTION_KEY: key, MONGODB_URI: 'mongodb://127.0.0.1:27017/x' });
+			loadConfig({ ...BASE, NODE_ENV: 'production', ENCRYPTION_KEY: key, MONGODB_URI: 'mongodb://127.0.0.1:27017/x' });
 		} catch (error) {
 			expect(String(error)).not.toContain(key);
 		}

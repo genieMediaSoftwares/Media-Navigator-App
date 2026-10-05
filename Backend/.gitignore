@@ -161,9 +161,7 @@ dist
 # wrangler project
 
 .dev.vars*
-!.dev.vars.example
 .env*
-!.env.example
 .wrangler/
 
 # D1 → MongoDB migration backups (contain password hashes and encrypted credentials)

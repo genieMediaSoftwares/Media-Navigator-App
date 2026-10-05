@@ -11,10 +11,6 @@ import { ConnectOption, ProviderAuthError, SocialProvider } from './types';
 // (watch time, shares) when that scope was granted. A hidden like/subscriber count stays null.
 
 const SCOPES = ['https://www.googleapis.com/auth/youtube.readonly', 'https://www.googleapis.com/auth/yt-analytics.readonly'];
-const DATA_API = 'https://www.googleapis.com/youtube/v3';
-const ANALYTICS_API = 'https://youtubeanalytics.googleapis.com/v2/reports';
-const TOKEN_URL = 'https://oauth2.googleapis.com/token';
-const MAX_VIDEOS = 200;
 
 interface TokenResponse {
 	access_token?: string;
@@ -36,7 +32,7 @@ function toCredentials(token: TokenResponse, previousRefreshToken: string | null
 }
 
 async function tokenRequest(params: Record<string, string>, fetchImpl: typeof fetch): Promise<TokenResponse> {
-	return requestJson<TokenResponse>(TOKEN_URL, {
+	return requestJson<TokenResponse>(getConfig().GOOGLE_OAUTH_TOKEN_URL, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
 		body: new URLSearchParams(params).toString(),
@@ -59,7 +55,7 @@ interface ChannelsResponse {
 }
 
 async function listChannels(credentials: PlatformCredentials, fetchImpl: typeof fetch): Promise<ChannelsResponse['items']> {
-	const res = await requestJson<ChannelsResponse>(`${DATA_API}/channels?part=snippet,statistics,contentDetails&mine=true`, {
+	const res = await requestJson<ChannelsResponse>(`${getConfig().YOUTUBE_DATA_API_BASE_URL}/channels?part=snippet,statistics,contentDetails&mine=true`, {
 		headers: authHeaders(credentials),
 		fetchImpl,
 	});
@@ -71,15 +67,16 @@ function thumbnail(thumbnails: Record<string, { url?: string }> | undefined): st
 }
 
 async function pullChannel(channelId: string, credentials: PlatformCredentials, fetchImpl: typeof fetch): Promise<PulledData> {
+	const config = getConfig();
 	const channel = (await listChannels(credentials, fetchImpl))?.find((c) => c.id === channelId);
 	if (!channel) throw new ProviderAuthError('This YouTube channel is no longer available to the authorized Google account.');
 
 	const uploads = channel.contentDetails?.relatedPlaylists?.uploads;
 	const videoIds: string[] = [];
 	let pageToken: string | undefined;
-	while (uploads && videoIds.length < MAX_VIDEOS) {
+	while (uploads && videoIds.length < config.YOUTUBE_MAX_VIDEOS) {
 		const res = await requestJson<{ items?: Array<{ contentDetails?: { videoId?: string } }>; nextPageToken?: string }>(
-			`${DATA_API}/playlistItems?part=contentDetails&maxResults=50&playlistId=${encodeURIComponent(uploads)}${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`,
+			`${config.YOUTUBE_DATA_API_BASE_URL}/playlistItems?part=contentDetails&maxResults=50&playlistId=${encodeURIComponent(uploads)}${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`,
 			{ headers: authHeaders(credentials), fetchImpl },
 		);
 		for (const item of res.items ?? []) if (item.contentDetails?.videoId) videoIds.push(item.contentDetails.videoId);
@@ -96,7 +93,7 @@ async function pullChannel(channelId: string, credentials: PlatformCredentials, 
 				snippet?: { title?: string; description?: string; publishedAt?: string; thumbnails?: Record<string, { url?: string }> };
 				statistics?: { viewCount?: string; likeCount?: string; commentCount?: string };
 			}>;
-		}>(`${DATA_API}/videos?part=snippet,statistics&id=${videoIds.slice(i, i + 50).join(',')}`, { headers: authHeaders(credentials), fetchImpl });
+		}>(`${config.YOUTUBE_DATA_API_BASE_URL}/videos?part=snippet,statistics&id=${videoIds.slice(i, i + 50).join(',')}`, { headers: authHeaders(credentials), fetchImpl });
 		for (const video of res.items ?? []) {
 			const stats = analytics.get(video.id);
 			const published = video.snippet?.publishedAt ? new Date(video.snippet.publishedAt) : null;
@@ -142,16 +139,17 @@ async function fetchVideoAnalytics(
 	credentials: PlatformCredentials,
 	fetchImpl: typeof fetch,
 ): Promise<Map<string, { minutesWatched: number | null; averageViewDuration: number | null; shares: number | null }>> {
+	const config = getConfig();
 	const result = new Map<string, { minutesWatched: number | null; averageViewDuration: number | null; shares: number | null }>();
 	try {
-		const url = new URL(ANALYTICS_API);
+		const url = new URL(config.YOUTUBE_ANALYTICS_API_BASE_URL);
 		url.searchParams.set('ids', 'channel==MINE');
 		url.searchParams.set('startDate', '2005-02-14');
 		url.searchParams.set('endDate', new Date().toISOString().slice(0, 10));
 		url.searchParams.set('metrics', 'views,estimatedMinutesWatched,averageViewDuration,shares');
 		url.searchParams.set('dimensions', 'video');
 		url.searchParams.set('sort', '-views');
-		url.searchParams.set('maxResults', String(MAX_VIDEOS));
+		url.searchParams.set('maxResults', String(config.YOUTUBE_MAX_VIDEOS));
 		const report = await requestJson<{ columnHeaders?: Array<{ name: string }>; rows?: unknown[][] }>(url.toString(), {
 			headers: authHeaders(credentials),
 			fetchImpl,
@@ -186,7 +184,7 @@ export const youtubeProvider: SocialProvider = {
 	},
 	authorizationUrl(state, codeChallenge) {
 		const config = getConfig();
-		const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+		const url = new URL(config.GOOGLE_OAUTH_AUTH_URL);
 		url.searchParams.set('client_id', config.GOOGLE_CLIENT_ID ?? '');
 		url.searchParams.set('redirect_uri', config.GOOGLE_REDIRECT_URI ?? '');
 		url.searchParams.set('response_type', 'code');

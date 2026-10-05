@@ -7,15 +7,12 @@ import { decryptJson, encryptJson } from './credentials';
 // OAuth `state` handling shared by every provider. The state is 32 random bytes, bound to the user who
 // started the flow, single-use, and valid for 10 minutes. Only its SHA-256 is stored.
 
-const STATE_TTL_MS = 10 * 60 * 1000;
-export const DEFAULT_RETURN_URL = 'medianavigator://oauth/callback';
-
 /**
  * Accepts only app deep links (schemes from APP_REDIRECT_SCHEMES, e.g. medianavigator:// and Expo Go's
  * exp://), so the public callback can never be used as an open redirect to a website.
  */
 export function resolveReturnUrl(raw: string | null | undefined): string {
-	if (!raw) return DEFAULT_RETURN_URL;
+	if (!raw) return getConfig().DEFAULT_RETURN_URL;
 	let url: URL;
 	try {
 		url = new URL(raw);
@@ -52,7 +49,7 @@ export async function createOAuthState(
 		platform,
 		returnUrl,
 		codeVerifier: options.codeVerifier ? await encryptJson(options.codeVerifier) : null,
-		expiresAt: new Date(now + STATE_TTL_MS),
+		expiresAt: new Date(now + getConfig().OAUTH_STATE_TTL_MS),
 	});
 	return state;
 }

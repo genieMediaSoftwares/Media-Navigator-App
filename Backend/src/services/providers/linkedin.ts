@@ -13,8 +13,6 @@ import { ConnectOption, ProviderAuthError, SocialProvider } from './types';
 // reconnects when the 60-day token expires.
 
 const SCOPES = ['r_organization_admin', 'r_organization_social'];
-const API = 'https://api.linkedin.com/rest';
-const MAX_POSTS = 100;
 
 function headers(credentials: PlatformCredentials, finder = false): Record<string, string> {
 	return {
@@ -45,7 +43,7 @@ function toCredentials(token: TokenResponse): PlatformCredentials {
 }
 
 async function tokenRequest(params: Record<string, string>, fetchImpl: typeof fetch): Promise<TokenResponse> {
-	return requestJson<TokenResponse>('https://www.linkedin.com/oauth/v2/accessToken', {
+	return requestJson<TokenResponse>(`${getConfig().LINKEDIN_OAUTH_BASE_URL}/accessToken`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
 		body: new URLSearchParams(params).toString(),
@@ -61,8 +59,9 @@ interface Organization {
 }
 
 async function listOrganizations(credentials: PlatformCredentials, fetchImpl: typeof fetch): Promise<ConnectOption[]> {
+	const config = getConfig();
 	const acls = await requestJson<{ elements?: Array<{ organization?: string }> }>(
-		`${API}/organizationAcls?q=roleAssignee&role=ADMINISTRATOR&state=APPROVED&count=50`,
+		`${config.LINKEDIN_API_BASE_URL}/organizationAcls?q=roleAssignee&role=ADMINISTRATOR&state=APPROVED&count=50`,
 		{ headers: headers(credentials, true), fetchImpl, authStatuses: [401, 403] },
 	);
 	const ids = (acls.elements ?? [])
@@ -73,7 +72,7 @@ async function listOrganizations(credentials: PlatformCredentials, fetchImpl: ty
 	}
 	const options: ConnectOption[] = [];
 	for (const id of ids) {
-		const org = await requestJson<Organization>(`${API}/organizations/${id}`, { headers: headers(credentials), fetchImpl });
+		const org = await requestJson<Organization>(`${config.LINKEDIN_API_BASE_URL}/organizations/${id}`, { headers: headers(credentials), fetchImpl });
 		options.push({
 			platformAccountId: id,
 			accountName: org.localizedName ?? null,
@@ -101,11 +100,13 @@ export function classifyLinkedInPost(post: Post): ContentFormat {
 }
 
 async function pullOrganization(orgId: string, credentials: PlatformCredentials, fetchImpl: typeof fetch): Promise<PulledData> {
-	const org = await requestJson<Organization>(`${API}/organizations/${orgId}`, { headers: headers(credentials), fetchImpl, authStatuses: [401, 403] });
+	const config = getConfig();
+	const apiBase = config.LINKEDIN_API_BASE_URL;
+	const org = await requestJson<Organization>(`${apiBase}/organizations/${orgId}`, { headers: headers(credentials), fetchImpl, authStatuses: [401, 403] });
 	let followers: number | null = null;
 	try {
 		const size = await requestJson<{ firstDegreeSize?: number }>(
-			`${API}/networkSizes/${encodeURIComponent(orgUrn(orgId))}?edgeType=COMPANY_FOLLOWED_BY_MEMBER`,
+			`${apiBase}/networkSizes/${encodeURIComponent(orgUrn(orgId))}?edgeType=COMPANY_FOLLOWED_BY_MEMBER`,
 			{ headers: headers(credentials), fetchImpl },
 		);
 		followers = metricNumber(size.firstDegreeSize);
@@ -114,9 +115,9 @@ async function pullOrganization(orgId: string, credentials: PlatformCredentials,
 	}
 
 	const posts: Post[] = [];
-	for (let start = 0; posts.length < MAX_POSTS; start += 50) {
+	for (let start = 0; posts.length < config.LINKEDIN_MAX_POSTS; start += 50) {
 		const res = await requestJson<{ elements?: Post[] }>(
-			`${API}/posts?author=${encodeURIComponent(orgUrn(orgId))}&q=author&count=50&start=${start}&sortBy=LAST_MODIFIED`,
+			`${apiBase}/posts?author=${encodeURIComponent(orgUrn(orgId))}&q=author&count=50&start=${start}&sortBy=LAST_MODIFIED`,
 			{ headers: headers(credentials, true), fetchImpl },
 		);
 		const page = (res.elements ?? []).filter((p) => p.id && p.lifecycleState !== 'DRAFT');
@@ -126,13 +127,13 @@ async function pullOrganization(orgId: string, credentials: PlatformCredentials,
 
 	const stats = await fetchShareStatistics(orgId, posts, credentials, fetchImpl);
 	const content: ContentInput[] = [];
-	for (const post of posts.slice(0, MAX_POSTS)) {
+	for (const post of posts.slice(0, config.LINKEDIN_MAX_POSTS)) {
 		const urn = post.id as string;
 		let likes: number | null = null;
 		let comments: number | null = null;
 		try {
 			const social = await requestJson<{ reactionSummaries?: Record<string, { count?: number }>; commentSummary?: { count?: number } }>(
-				`${API}/socialMetadata/${encodeURIComponent(urn)}`,
+				`${apiBase}/socialMetadata/${encodeURIComponent(urn)}`,
 				{ headers: headers(credentials), fetchImpl },
 			);
 			const reactions = Object.values(social.reactionSummaries ?? {}).map((r) => metricNumber(r.count));
@@ -187,6 +188,8 @@ interface ShareStats {
 
 /** Lifetime per-post statistics for organization posts; empty when not authorized. */
 async function fetchShareStatistics(orgId: string, posts: Post[], credentials: PlatformCredentials, fetchImpl: typeof fetch): Promise<Map<string, ShareStats>> {
+	const config = getConfig();
+	const apiBase = config.LINKEDIN_API_BASE_URL;
 	const result = new Map<string, ShareStats>();
 	const shares = posts.map((p) => p.id as string).filter((id) => id.startsWith('urn:li:share:'));
 	const ugcPosts = posts.map((p) => p.id as string).filter((id) => id.startsWith('urn:li:ugcPost:'));
@@ -214,7 +217,7 @@ async function fetchShareStatistics(orgId: string, posts: Post[], credentials: P
 						commentCount?: number;
 					};
 				}>;
-			}>(`${API}/organizationalEntityShareStatistics?${params.join('&')}`, { headers: headers(credentials, true), fetchImpl });
+			}>(`${apiBase}/organizationalEntityShareStatistics?${params.join('&')}`, { headers: headers(credentials, true), fetchImpl });
 			for (const element of res.elements ?? []) {
 				const urn = element.share ?? element.ugcPost;
 				const t = element.totalShareStatistics;
@@ -248,7 +251,7 @@ export const linkedinProvider: SocialProvider = {
 	},
 	authorizationUrl(state) {
 		const config = getConfig();
-		const url = new URL('https://www.linkedin.com/oauth/v2/authorization');
+		const url = new URL(`${config.LINKEDIN_OAUTH_BASE_URL}/authorization`);
 		url.searchParams.set('response_type', 'code');
 		url.searchParams.set('client_id', config.LINKEDIN_CLIENT_ID ?? '');
 		url.searchParams.set('redirect_uri', config.LINKEDIN_REDIRECT_URI ?? '');
