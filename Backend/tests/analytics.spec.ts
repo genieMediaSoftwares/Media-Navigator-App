@@ -568,3 +568,78 @@ describe('platform vocabulary (unit)', () => {
 		expect(JSON.stringify(trends)).not.toMatch(/Reel/);
 	});
 });
+
+describe('analysis screen API (period, scope, all platforms)', () => {
+	it('no connected account: no analysis, never invented numbers', async () => {
+		const { token } = await signUp();
+		const res = await call('GET', '/api/intelligence/analysis', { token });
+		expect(res.body.data).toEqual({ accounts: [], analysis: null });
+		expect((await call('GET', '/api/intelligence/analysis?period=1y', { token })).status).toBe(400);
+	});
+
+	it('one account: period sums match stored posts, previous period comparison is real or unavailable', async () => {
+		// 30 posts, one every 20h starting 5 days ago: all inside the last 30 days, none in the 30 before.
+		const media = makeMedia(30);
+		const { user, accountId } = await connect({ igId: 'ig_an_1', media });
+		const data = (await call('GET', '/api/intelligence/analysis?period=30d&tz=UTC', { token: user.token })).body.data.analysis;
+		expect(data.scope).toBe(accountId);
+		expect(data.accounts).toHaveLength(1);
+		expect(data.accounts[0].contentCount).toBe(30);
+		const tile = (m: string) => data.performance.tiles.find((t: any) => t.metric === m);
+		const views = media.reduce((s, m) => s + (m.insights?.data.find((d) => d.name === 'views')?.values[0].value ?? 0), 0);
+		expect(tile('views').value).toBe(views);
+		expect(tile('likes').value).toBe(media.reduce((s, m) => s + m.like_count, 0));
+		expect(tile('posts').value).toBe(30);
+		// Nothing was published in the previous 30 days: no fake percentage.
+		expect(tile('views').changePercent).toBeNull();
+		expect(data.distribution.kind).toBe('format');
+		expect(data.distribution.items.map((i: any) => i.label).sort()).toEqual(['Photos', 'Reels']);
+		expect(data.trend.series).toHaveLength(1);
+		expect(data.trend.buckets).toHaveLength(30);
+		// Daily points in a 30-day range are trailing 7-day windows; 90 days are weekly.
+		expect(data.trend.rollingDays).toBe(7);
+		const quarter = (await call('GET', '/api/intelligence/analysis?period=90d&tz=UTC', { token: user.token })).body.data.analysis;
+		expect(quarter.trend.granularity).toBe('week');
+		expect(quarter.trend.rollingDays).toBe(1);
+		expect(data.top?.kind).toBe('format');
+		expect(data.sync.storedCount).toBe(30);
+
+		const top = (await call('GET', '/api/intelligence/analysis/content?type=top&limit=5', { token: user.token })).body.data;
+		expect(top.items).toHaveLength(5);
+		const scores = top.items.map((i: any) => i.post.score);
+		expect(scores).toEqual([...scores].sort((a: number, b: number) => b - a));
+		expect(top.items[0].platform).toBe('instagram');
+		expect((await call('GET', '/api/intelligence/analysis/content?type=worst', { token: user.token })).status).toBe(400);
+
+		// A 7-day window holds fewer posts; the 7 days before it are compared for real.
+		const week = (await call('GET', '/api/intelligence/analysis?period=7d&tz=UTC', { token: user.token })).body.data.analysis;
+		expect(week.performance.postsInPeriod).toBeLessThan(30);
+		expect(week.performance.tiles.find((t: any) => t.metric === 'posts').previous).toBeGreaterThan(0);
+	});
+
+	it('several accounts: "all" combines only connected accounts, per-account scope never mixes data', async () => {
+		const user = await signUp();
+		install({ igId: 'ig_an_a', media: makeMedia(20) });
+		const a = (await call('POST', '/api/accounts/connect', { token: user.token, body: { platform: 'instagram', accessToken: 'TOKEN_A' } })).body.data.account.id;
+		install({ igId: 'ig_an_b', media: makeMedia(10) });
+		const b = (await call('POST', '/api/accounts/connect', { token: user.token, body: { platform: 'instagram', accessToken: 'TOKEN_B' } })).body.data.account.id;
+
+		const all = (await call('GET', '/api/intelligence/analysis?tz=UTC', { token: user.token })).body.data.analysis;
+		expect(all.scope).toBe('all');
+		expect(all.performance.tiles.find((t: any) => t.metric === 'posts').value).toBe(30);
+		expect(all.distribution.kind).toBe('platform');
+		expect(all.distribution.items.map((i: any) => i.count).sort()).toEqual([10, 20]);
+		expect(all.trend.series.map((s: any) => s.accountId).sort()).toEqual([a, b].sort());
+
+		const onlyB = (await call('GET', `/api/intelligence/analysis?scope=${b}&tz=UTC`, { token: user.token })).body.data.analysis;
+		expect(onlyB.performance.tiles.find((t: any) => t.metric === 'posts').value).toBe(10);
+		expect(onlyB.trend.series.map((s: any) => s.accountId)).toEqual([b]);
+
+		const filtered = (await call('GET', `/api/intelligence/analysis/content?scope=all&type=top&accountId=${b}&limit=30`, { token: user.token })).body.data;
+		expect(filtered.items.every((i: any) => i.accountId === b)).toBe(true);
+		expect(filtered.total).toBeLessThanOrEqual(10);
+
+		const other = await signUp();
+		expect((await call('GET', `/api/intelligence/analysis?scope=${a}`, { token: other.token })).status).toBe(404);
+	});
+});

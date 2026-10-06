@@ -1,6 +1,6 @@
 import { Request, Router } from 'express';
 
-import { ConnectedAccountRow } from '../db/accounts';
+import { ConnectedAccountRow, findAccountsByUserId } from '../db/accounts';
 import { findContentById, getLastSyncRun, MediaSort, queryContent } from '../db/content';
 import { HttpError, ok, queryParam, readJsonObject } from '../lib/http';
 import { authOf, requireAuth } from '../middleware/auth';
@@ -36,6 +36,7 @@ import {
 } from '../services/analytics';
 import { IntelligenceSnapshot, loadIntelligenceSnapshot, resolveAnalyticsAccount, snapshotInsights } from '../services/intelligenceSnapshot';
 import { describeSyncStatus } from '../services/syncStatus';
+import { buildAnalysis, buildAnalysisContent, parsePeriod } from '../services/crossAnalysis';
 import { platformName } from '../services/platforms';
 
 // Intelligence API. Every number is computed from synced data in MongoDB (services/intelligence.ts);
@@ -438,6 +439,55 @@ export function intelligenceRouter(): Router {
 			throw new HttpError(422, 'INSUFFICIENT_DATA', `AI trends need clear patterns in at least ${trends.minimumRequired} synced posts.`);
 		}
 		ok(res, await getTrendInterpretation(auth.user.id, snapshot, trends, req.now));
+	});
+
+	/**
+	 * Resolves ?scope= for the Analysis screen: an owned account id, or "all" (cross-platform, only with two
+	 * or more connected accounts). Without a scope: "all" when several accounts exist, else the only one.
+	 */
+	async function analysisScope(req: Request) {
+		const userId = authOf(req).user.id;
+		const accounts = await findAccountsByUserId(userId);
+		const raw = queryParam(req, 'scope');
+		const period = parsePeriod(queryParam(req, 'period'));
+		if (!period) throw new HttpError(400, 'VALIDATION_ERROR', 'Unsupported period. Use 7d, 30d or 90d.');
+		// An explicit account must belong to this user, whether or not they have any accounts.
+		if (raw && raw !== 'all' && !accounts.some((a) => a.id === raw)) throw new HttpError(404, 'ACCOUNT_NOT_FOUND', 'Connected account not found.');
+		if (accounts.length === 0) return { accounts, scope: null, period };
+		const scope = raw === 'all' || (!raw && accounts.length > 1) ? (accounts.length > 1 ? 'all' : accounts[0].id) : (raw ?? accounts[0].id);
+		return { accounts, scope, period };
+	}
+
+	/** GET /api/intelligence/analysis?scope=all|<accountId>&period=7d|30d|90d&tz= — the Analysis screen summary. */
+	router.get('/analysis', async (req, res) => {
+		const { accounts, scope, period } = await analysisScope(req);
+		if (!scope) {
+			ok(res, { accounts: [], analysis: null });
+			return;
+		}
+		const analysis = await buildAnalysis(accounts, scope, period, resolveTimeZone(queryParam(req, 'tz')), req.now);
+		const single = scope === 'all' ? null : accounts.find((a) => a.id === scope) ?? null;
+		ok(res, { analysis: { ...analysis, sync: single ? await describeSyncStatus(single, req.now) : null, aiConfigured: isAiConfigured() } });
+	});
+
+	/**
+	 * GET /api/intelligence/analysis/content?scope=&period=&type=top|improve&accountId=&limit=&offset= — content
+	 * cards for the Analysis tabs. `accountId` narrows "all" to one platform's posts.
+	 */
+	router.get('/analysis/content', async (req, res) => {
+		const { accounts, scope, period } = await analysisScope(req);
+		const type = queryParam(req, 'type') ?? 'top';
+		if (type !== 'top' && type !== 'improve') throw new HttpError(400, 'VALIDATION_ERROR', 'Unsupported content type.');
+		if (!scope) {
+			ok(res, { items: [], total: 0, nextOffset: null });
+			return;
+		}
+		const filter = queryParam(req, 'accountId');
+		if (filter && !accounts.some((a) => a.id === filter)) throw new HttpError(404, 'ACCOUNT_NOT_FOUND', 'Connected account not found.');
+		const inScope = accounts.filter((a) => (scope === 'all' ? !filter || a.id === filter : a.id === scope));
+		const limit = Math.min(Math.max(Number(queryParam(req, 'limit') ?? 8) || 8, 1), 30);
+		const offset = Math.max(Number(queryParam(req, 'offset') ?? 0) || 0, 0);
+		ok(res, await buildAnalysisContent(inScope, type, period, resolveTimeZone(queryParam(req, 'tz')), req.now, limit, offset));
 	});
 
 	/** GET /api/intelligence/ask?accountId= — recent questions and their answers. */

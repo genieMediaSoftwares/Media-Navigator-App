@@ -2,6 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { Tabs } from 'expo-router';
 import { ComponentProps } from 'react';
 import { ColorValue } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors } from '@/constants/colors';
 import { typography } from '@/constants/theme';
@@ -16,14 +17,23 @@ function tabIcon(active: IconName, inactive: IconName) {
 }
 
 export default function TabsLayout() {
+  const insets = useSafeAreaInsets();
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.neutral500,
-        tabBarLabelStyle: { fontSize: 12, fontWeight: typography.label.fontWeight },
-        tabBarStyle: { backgroundColor: colors.white, borderTopColor: colors.skyBorder },
+        tabBarLabelStyle: { fontSize: 12, lineHeight: 16, fontWeight: typography.label.fontWeight },
+        // Room for icon + label above the home indicator; without it the labels were clipped where
+        // there is no bottom inset (web, devices without a home indicator).
+        tabBarStyle: {
+          backgroundColor: colors.white,
+          borderTopColor: colors.skyBorder,
+          height: 68 + insets.bottom,
+          paddingTop: 6,
+          paddingBottom: Math.max(insets.bottom, 10),
+        },
       }}
     >
       <Tabs.Screen name="index" options={{ title: 'Dashboard', tabBarIcon: tabIcon('home', 'home-outline') }} />

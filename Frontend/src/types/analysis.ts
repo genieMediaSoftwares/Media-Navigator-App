@@ -4,7 +4,7 @@
 // provide the value and must render as "Not available", never as 0. AI fields are interpretation and
 // are always shown with an AI label.
 
-import type { ContentFormat, IntelligenceAccount, IntelligencePost, MetricDefinitions } from './api';
+import type { ContentFormat, IntelligenceAccount, IntelligencePost, MetricDefinitions, SocialPlatform } from './api';
 
 export type SyncState = 'never' | 'syncing' | 'completed' | 'partial' | 'failed';
 
@@ -326,4 +326,107 @@ export interface VideoAnalysisResponse {
     cannotAssess: string[];
     generatedAt: string;
   } | null;
+}
+
+// ---- Analysis screen (GET /api/intelligence/analysis, /analysis/content) -----------------------
+
+export type AnalysisPeriod = '7d' | '30d' | '90d';
+export type PerformanceMetric = 'views' | 'likes' | 'comments' | 'posts';
+export type AnalysisTrendMetric = 'views' | 'likes' | 'comments' | 'engagementRate';
+
+export interface AnalysisAccount {
+  id: string;
+  platform: SocialPlatform;
+  handle: string;
+  displayName: string | null;
+  status: 'connected' | 'reauthorization_required' | 'error';
+  lastSyncedAt: string | null;
+  /** Synced items for this account (all time). */
+  contentCount: number;
+}
+
+export interface PerformanceTile {
+  metric: PerformanceMetric;
+  /** Sum over posts published in the period; null = not reported by the platform(s). */
+  value: number | null;
+  previous: number | null;
+  /** null = no comparable previous period. */
+  changePercent: number | null;
+  unavailableOn: SocialPlatform[];
+}
+
+export interface AnalysisTrendSeries {
+  accountId: string;
+  platform: SocialPlatform;
+  label: string;
+  values: Record<AnalysisTrendMetric, (number | null)[]>;
+}
+
+export interface DistributionItem {
+  key: string;
+  label: string;
+  platform: SocialPlatform | null;
+  format: ContentFormat | null;
+  count: number;
+  percent: number;
+}
+
+export interface TopPerformer {
+  kind: 'platform' | 'format';
+  platform: SocialPlatform;
+  format: ContentFormat | null;
+  label: string;
+  reason: string;
+  metric: 'engagementRate' | 'views';
+  value: number;
+  changePercent: number | null;
+  comparedWith: number;
+}
+
+export interface ContentIdea {
+  id: string;
+  accountId: string;
+  platform: SocialPlatform;
+  format: ContentFormat | null;
+  idea: string;
+  why: string;
+  when: string | null;
+  trendIds: string[];
+}
+
+export interface Analysis {
+  scope: 'all' | string;
+  accounts: AnalysisAccount[];
+  period: { key: AnalysisPeriod; days: number; start: string; end: string; previousStart: string };
+  performance: { tiles: PerformanceTile[]; postsInPeriod: number; headline: { metric: PerformanceMetric; changePercent: number | null } | null };
+  /** rollingDays > 1: each daily point covers posts published in the trailing N days. */
+  trend: { granularity: 'day' | 'week'; rollingDays: number; buckets: string[]; metrics: AnalysisTrendMetric[]; series: AnalysisTrendSeries[]; sufficient: boolean };
+  distribution: { kind: 'platform' | 'format'; total: number; items: DistributionItem[] };
+  top: TopPerformer | null;
+  topNote: string | null;
+  topics: { accountId: string; platform: SocialPlatform; trend: DetectedTrend }[];
+  ideas: ContentIdea[];
+  unavailable: { platform: SocialPlatform; topic: string; reason: string }[];
+  sync: SyncStatusSummary | null;
+  aiConfigured: boolean;
+}
+
+export interface AnalysisResponse {
+  /** Present when the user has no connected account. */
+  accounts?: AnalysisAccount[];
+  analysis: Analysis | null;
+}
+
+export interface AnalysisContentItem {
+  post: ScoredPost;
+  accountId: string;
+  platform: SocialPlatform;
+  isVideo: boolean;
+  reasons: ObservedReason[];
+}
+
+export interface AnalysisContentPage {
+  items: AnalysisContentItem[];
+  total: number;
+  nextOffset: number | null;
 }

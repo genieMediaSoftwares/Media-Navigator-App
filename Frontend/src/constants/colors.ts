@@ -86,3 +86,14 @@ export const gradients = {
 } as const satisfies Record<string, readonly [string, string, ...string[]]>;
 
 export type GradientName = keyof typeof gradients;
+
+/**
+ * Platform identity: the brand color behind each logo tile, the very soft tint of its dashboard card,
+ * and its line color in charts. Tints stay pastel; only the logo tile is saturated.
+ */
+export const platformColors = {
+  instagram: { logo: ['#FEDA75', '#FA7E1E', '#D62976', '#962FBF', '#4F5BD5'], tint: ['#FFF3F8', '#F6F2FF'], border: '#F6DCEA', line: '#D946B8' },
+  youtube: { logo: ['#FF0000', '#E60000'], tint: ['#FFF6F6', '#FFF1F3'], border: '#F8DEDE', line: '#EF3B3B' },
+  facebook: { logo: ['#1877F2', '#0F64D8'], tint: ['#F3F8FF', '#EEF4FF'], border: '#DCE8FA', line: '#2563EB' },
+  linkedin: { logo: ['#0A66C2', '#0857A6'], tint: ['#F1F8FD', '#EDF5FC'], border: '#D7E8F6', line: '#1E3A8A' },
+} as const satisfies Record<string, { logo: readonly [string, string, ...string[]]; tint: readonly [string, string]; border: string; line: string }>;
