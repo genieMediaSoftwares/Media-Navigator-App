@@ -18,6 +18,13 @@ import { plannerRouter } from './routes/planner';
 import { profileRouter } from './routes/profile';
 
 /** Path patterns and methods, used only to answer 405 (with Allow) instead of 404 for a wrong method. */
+/**
+ * The Expo web dev server on this machine (http://localhost:8081, http://127.0.0.1:19006, …). Allowed by
+ * default so local web development works against any deployment without editing CORS_ALLOWED_ORIGINS.
+ * Safe because auth uses bearer tokens, never cookies: a page cannot use a session it does not hold.
+ */
+const LOOPBACK_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1)(:\d{1,5})?$/;
+
 const KNOWN_ROUTES: Array<{ pattern: RegExp; methods: string[] }> = [
 	{ pattern: /^\/$/, methods: ['GET'] },
 	{ pattern: /^\/health$/, methods: ['GET'] },
@@ -62,7 +69,7 @@ export function createApp(): Express {
 	const origins = allowedCorsOrigins(config);
 	app.use(
 		cors({
-			origin: (origin, callback) => callback(null, origin !== undefined && origins.includes(origin) ? origin : false),
+			origin: (origin, callback) => callback(null, origin !== undefined && (origins.includes(origin) || (config.ALLOW_LOCALHOST_ORIGINS && LOOPBACK_ORIGIN.test(origin))) ? origin : false),
 			methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
 			allowedHeaders: ['Authorization', 'Content-Type'],
 			maxAge: 600,

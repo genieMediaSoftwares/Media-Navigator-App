@@ -37,6 +37,21 @@ describe('media-navigator-api', () => {
 		expect(preflight.headers.get('Access-Control-Allow-Methods')).toContain('DELETE');
 	});
 
+	it('allows the local Expo web dev server (localhost / 127.0.0.1, any port) but not look-alike origins', async () => {
+		for (const origin of ['http://localhost:8081', 'http://127.0.0.1:19006', 'http://localhost']) {
+			const preflight = await call('OPTIONS', '/api/auth/login', {
+				headers: { Origin: origin, 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'content-type' },
+			});
+			expect(preflight.status).toBe(204);
+			expect(preflight.headers.get('Access-Control-Allow-Origin')).toBe(origin);
+			expect(preflight.headers.get('Access-Control-Allow-Credentials')).toBeNull();
+		}
+		for (const origin of ['http://localhost.evil.example', 'https://localhost.evil.example:8081', 'http://evil.example?localhost', 'http://127.0.0.1.evil.example']) {
+			const result = await call('GET', '/health', { headers: { Origin: origin } });
+			expect(result.headers.get('Access-Control-Allow-Origin')).toBeNull();
+		}
+	});
+
 	it('sets security headers and never caches API responses', async () => {
 		const result = await call('GET', '/health');
 		expect(result.headers.get('X-Content-Type-Options')).toBe('nosniff');

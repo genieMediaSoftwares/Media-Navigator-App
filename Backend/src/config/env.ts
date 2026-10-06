@@ -21,6 +21,14 @@ const schema = z.object({
 
 	/** Comma-separated browser origins (Expo web only; native apps send no Origin). Empty = none. */
 	CORS_ALLOWED_ORIGINS: z.string(),
+	/**
+	 * Also allow http://localhost:<port> and http://127.0.0.1:<port> (local Expo web). Default true; set
+	 * "false" to allow only CORS_ALLOWED_ORIGINS.
+	 */
+	ALLOW_LOCALHOST_ORIGINS: z
+		.enum(['true', 'false'])
+		.default('true')
+		.transform((value) => value === 'true'),
 	/** Number of proxy hops in front of the app (Render: 1) so req.ip is the client address. */
 	TRUST_PROXY: z.coerce.number().int().min(0, 'TRUST_PROXY is required.'),
 
