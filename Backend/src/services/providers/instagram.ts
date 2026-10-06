@@ -35,5 +35,5 @@ export const instagramProvider: SocialProvider = {
 		return optionsFromToken(accessToken, expiresAt, fetchImpl);
 	},
 	optionsFromAccessToken: (accessToken, fetchImpl) => optionsFromToken(accessToken, null, fetchImpl),
-	sync: (account, now, fetchImpl) => syncInstagramAccount(account, now, fetchImpl),
+	sync: (account, now, fetchImpl, options) => syncInstagramAccount(account, now, fetchImpl, options),
 };

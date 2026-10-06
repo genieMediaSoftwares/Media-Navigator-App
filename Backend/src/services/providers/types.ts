@@ -1,5 +1,5 @@
 import type { ConnectedAccountRow } from '../../db/accounts';
-import type { Platform, PendingOption } from '../../models';
+import type { Platform, PendingOption, SyncMode } from '../../models';
 import type { PlatformCredentials } from '../credentials';
 import type { SyncSummary } from '../instagramSync';
 
@@ -25,7 +25,7 @@ export interface SocialProvider {
 	/** Lists connectable accounts for a user-supplied access token (manual connection), when the platform supports it. */
 	optionsFromAccessToken?(accessToken: string, fetchImpl?: typeof fetch): Promise<ConnectOption[]>;
 	/** Pulls profile metrics and content into MongoDB. */
-	sync(account: ConnectedAccountRow, now: number, fetchImpl?: typeof fetch): Promise<SyncSummary>;
+	sync(account: ConnectedAccountRow, now: number, fetchImpl?: typeof fetch, options?: { mode?: SyncMode }): Promise<SyncSummary>;
 }
 
 /** The platform rejected the credential (expired/revoked/insufficient scope): the user must reconnect. */

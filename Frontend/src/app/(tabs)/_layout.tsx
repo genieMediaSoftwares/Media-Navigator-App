@@ -26,8 +26,8 @@ export default function TabsLayout() {
         tabBarStyle: { backgroundColor: colors.white, borderTopColor: colors.skyBorder },
       }}
     >
-      <Tabs.Screen name="index" options={{ title: 'Home', tabBarIcon: tabIcon('home', 'home-outline') }} />
-      <Tabs.Screen name="intelligence" options={{ title: 'Intelligence', tabBarIcon: tabIcon('bulb', 'bulb-outline') }} />
+      <Tabs.Screen name="index" options={{ title: 'Dashboard', tabBarIcon: tabIcon('home', 'home-outline') }} />
+      <Tabs.Screen name="intelligence" options={{ title: 'Analysis', tabBarIcon: tabIcon('analytics', 'analytics-outline') }} />
       <Tabs.Screen name="planner" options={{ title: 'Planner', tabBarIcon: tabIcon('calendar', 'calendar-outline') }} />
       <Tabs.Screen name="profile" options={{ title: 'Profile', tabBarIcon: tabIcon('person-circle', 'person-circle-outline') }} />
     </Tabs>

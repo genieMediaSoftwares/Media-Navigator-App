@@ -15,6 +15,7 @@ export interface ConnectedAccountRow {
 	created_at: number;
 	updated_at: number;
 	last_synced_at: number | null;
+	last_full_sync_at: number | null;
 }
 
 function toRow(doc: ConnectedAccountDoc): ConnectedAccountRow {
@@ -32,6 +33,7 @@ function toRow(doc: ConnectedAccountDoc): ConnectedAccountRow {
 		created_at: doc.createdAt.getTime(),
 		updated_at: doc.updatedAt.getTime(),
 		last_synced_at: doc.lastSyncedAt ? doc.lastSyncedAt.getTime() : null,
+		last_full_sync_at: doc.lastFullSyncAt ? doc.lastFullSyncAt.getTime() : null,
 	};
 }
 
@@ -120,6 +122,38 @@ export async function updateAccountStatusAndSynced(
 
 export async function updateAccountStatus(id: string, status: AccountStatus, now: number): Promise<void> {
 	await ConnectedAccount.updateOne({ _id: id }, { $set: { status, updatedAt: new Date(now) } });
+}
+
+export async function markFullSyncCompleted(id: string, now: number): Promise<void> {
+	await ConnectedAccount.updateOne({ _id: id }, { $set: { lastFullSyncAt: new Date(now) } });
+}
+
+/**
+ * Takes the account's sync lease atomically. Returns false when another sync holds an unexpired lease
+ * (a manual sync and the scheduler, or two taps). The lease expires on its own if a process dies.
+ */
+export async function acquireSyncLease(id: string, now: number, durationMs: number): Promise<boolean> {
+	const result = await ConnectedAccount.updateOne(
+		{ _id: id, $or: [{ syncLeaseUntil: null }, { syncLeaseUntil: { $exists: false } }, { syncLeaseUntil: { $lte: new Date(now) } }] },
+		{ $set: { syncLeaseUntil: new Date(now + durationMs) } },
+	);
+	return result.modifiedCount === 1;
+}
+
+export async function releaseSyncLease(id: string): Promise<void> {
+	await ConnectedAccount.updateOne({ _id: id }, { $set: { syncLeaseUntil: null } });
+}
+
+/** Connected accounts whose last sync is older than `syncedBefore` (or never ran), least recently synced first. */
+export async function findAccountsDueForSync(syncedBefore: number, limit: number): Promise<ConnectedAccountRow[]> {
+	const docs = await ConnectedAccount.find({
+		status: 'connected',
+		$or: [{ lastSyncedAt: null }, { lastSyncedAt: { $lt: new Date(syncedBefore) } }],
+	})
+		.sort({ lastSyncedAt: 1 })
+		.limit(limit)
+		.lean<ConnectedAccountDoc[]>();
+	return docs.map(toRow);
 }
 
 export async function deleteConnectedAccount(id: string, userId: string): Promise<boolean> {

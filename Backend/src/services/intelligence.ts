@@ -4,7 +4,8 @@ import type { ContentRow } from '../db/content';
 // nothing is estimated: every number is computed from stored rows, and a metric that was not
 // returned by Meta stays null ("not available") instead of becoming zero.
 
-export type ContentFormat = 'REEL' | 'POST' | 'CAROUSEL' | 'VIDEO' | 'STORY';
+export type { ContentFormat } from '../models/ContentItem';
+import type { ContentFormat } from '../models/ContentItem';
 
 /** Instagram format from Meta media fields; stored on each content item at sync time. */
 export function classifyFormat(mediaType: string | null, mediaProductType: string | null): ContentFormat {
@@ -15,7 +16,7 @@ export function classifyFormat(mediaType: string | null, mediaProductType: strin
 	return 'POST';
 }
 
-export const CONTENT_FORMATS: readonly ContentFormat[] = ['REEL', 'POST', 'CAROUSEL', 'VIDEO', 'STORY'];
+export const CONTENT_FORMATS: readonly ContentFormat[] = ['REEL', 'POST', 'CAROUSEL', 'VIDEO', 'STORY', 'TEXT', 'IMAGE', 'LINK', 'LIVE', 'ARTICLE', 'DOCUMENT', 'POLL'];
 
 /** Published and documented with every intelligence response so the app can show "How this is calculated". */
 export const METRIC_DEFINITIONS = {
@@ -25,7 +26,7 @@ export const METRIC_DEFINITIONS = {
 	baseline:
 		'Account average (mean) interactions per post, across all synced posts that have like or comment data. The median (typical post) is shown alongside, because a few viral posts can lift the mean far above what most posts receive.',
 	populations:
-		'Intelligence averages use all synced posts (up to 200). The Home screen and Instagram account screen show engagement over the latest 50 synced posts. Same formula, different set of posts.',
+		'Intelligence averages use all synced posts (Instagram’s API returns up to the 10,000 most recent). The Instagram account screen shows engagement over the latest 50 synced posts. Same formula, different set of posts.',
 	vsBaseline: '(Post interactions − account average) ÷ account average × 100.',
 	views: 'Reported by Instagram media insights. Not available for media without insights access.',
 	needsAttention:
@@ -243,10 +244,22 @@ export function resolveTimeZone(raw: string | null): string {
 	}
 }
 
+// Building an Intl.DateTimeFormat is far slower than using one; analytics call this per post.
+const dayHourFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function dayHourFormatter(timeZone: string): Intl.DateTimeFormat {
+	let formatter = dayHourFormatters.get(timeZone);
+	if (!formatter) {
+		formatter = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'short', hour: 'numeric', hourCycle: 'h23' });
+		dayHourFormatters.set(timeZone, formatter);
+	}
+	return formatter;
+}
+
 export function localDayHour(iso: string, timeZone: string): { dayOfWeek: number; hour: number } | null {
 	const date = new Date(iso);
 	if (Number.isNaN(date.getTime())) return null;
-	const parts = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'short', hour: 'numeric', hourCycle: 'h23' }).formatToParts(date);
+	const parts = dayHourFormatter(timeZone).formatToParts(date);
 	const weekday = parts.find((p) => p.type === 'weekday')?.value ?? '';
 	const hour = Number(parts.find((p) => p.type === 'hour')?.value);
 	const dayOfWeek = WEEKDAY_INDEX[weekday];

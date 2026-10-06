@@ -76,7 +76,11 @@ describe('SocialProvider: Facebook Pages', () => {
 		expect(classifyFacebookPost({ attachments: { data: [{ media_type: 'album' }] } })).toBe('CAROUSEL');
 		expect(classifyFacebookPost({ attachments: { data: [{ media_type: 'video', type: 'video_inline' }] } })).toBe('VIDEO');
 		expect(classifyFacebookPost({ attachments: { data: [{ media_type: 'video', type: 'reel' }] } })).toBe('REEL');
-		expect(classifyFacebookPost({})).toBe('POST');
+		// Platform vocabulary: no attachment is a text post; photos and links keep their own type.
+		expect(classifyFacebookPost({})).toBe('TEXT');
+		expect(classifyFacebookPost({ status_type: 'added_photos' })).toBe('IMAGE');
+		expect(classifyFacebookPost({ attachments: { data: [{ media_type: 'photo', type: 'photo' }] } })).toBe('IMAGE');
+		expect(classifyFacebookPost({ attachments: { data: [{ media_type: 'link', type: 'share' }] } })).toBe('LINK');
 	});
 
 	it('connects a selected Page from a Meta user token, stores only the Page token encrypted, and syncs posts', async () => {
@@ -104,7 +108,7 @@ describe('SocialProvider: Facebook Pages', () => {
 
 		const items = await ContentItem.find({ connectedAccountId: account.id }).sort({ publishedAt: -1 }).lean();
 		expect(items).toHaveLength(2);
-		expect(items[0]).toMatchObject({ platform: 'facebook', format: 'POST', caption: 'Fresh bread today', interactions: 15, metrics: { likes: 12, comments: 3, shares: 2, reach: 400, views: null, saves: null } });
+		expect(items[0]).toMatchObject({ platform: 'facebook', format: 'IMAGE', caption: 'Fresh bread today', interactions: 15, metrics: { likes: 12, comments: 3, shares: 2, reach: 400, views: null, saves: null } });
 		// Meta omits `shares` when unavailable or zero: stored as null, never as an invented 0.
 		expect(items[1]).toMatchObject({ format: 'CAROUSEL', metrics: { likes: 0, comments: 0, shares: null } });
 
@@ -143,9 +147,9 @@ describe('SocialProvider: YouTube', () => {
 		if (url.pathname === '/youtube/v3/videos') {
 			return json({
 				items: [
-					{ id: 'vid_1', snippet: { title: 'Sourdough basics', publishedAt: '2026-09-01T12:00:00Z', thumbnails: { high: { url: 'https://yt/1' } } }, statistics: { viewCount: '1000', likeCount: '90', commentCount: '10' } },
+					{ id: 'vid_1', snippet: { title: 'Sourdough basics', publishedAt: '2026-09-01T12:00:00Z', thumbnails: { high: { url: 'https://yt/1' } } }, statistics: { viewCount: '1000', likeCount: '90', commentCount: '10' }, contentDetails: { duration: 'PT15M33S' } },
 					// Likes hidden by the creator: the field is absent.
-					{ id: 'vid_2', snippet: { title: 'Knife skills', publishedAt: '2026-09-10T12:00:00Z' }, statistics: { viewCount: '500', commentCount: '4' } },
+					{ id: 'vid_2', snippet: { title: 'Knife skills', publishedAt: '2026-09-10T12:00:00Z' }, statistics: { viewCount: '500', commentCount: '4' }, liveStreamingDetails: { actualStartTime: '2026-09-10T12:00:00Z' } },
 				],
 			});
 		}
@@ -177,10 +181,11 @@ describe('SocialProvider: YouTube', () => {
 		const items = await ContentItem.find({ connectedAccountId: account.id }).sort({ publishedAt: 1 }).lean();
 		expect(items.map((i) => [i.platformContentId, i.format, i.metrics.views, i.metrics.likes, i.metrics.comments, i.metrics.shares])).toEqual([
 			['vid_1', 'VIDEO', 1000, 90, 10, 7],
-			['vid_2', 'VIDEO', 500, null, 4, null],
+			// A completed live broadcast is "Live", never relabelled; nothing is classified as a Short (the API has no such field).
+			['vid_2', 'LIVE', 500, null, 4, null],
 		]);
-		expect(items[0].extraMetrics).toEqual({ estimatedMinutesWatched: 2500, averageViewDurationSeconds: 150 });
-		expect(items[1].extraMetrics).toBeNull();
+		expect(items[0].extraMetrics).toEqual({ durationSeconds: 933, estimatedMinutesWatched: 2500, averageViewDurationSeconds: 150 });
+		expect(items[1].extraMetrics).toEqual({ durationSeconds: null });
 
 		const dash = getData(await call('GET', `/api/accounts/${account.id}/dashboard`, { token: user.token }));
 		expect(dash.metrics.followersCount).toBe(2500);
@@ -235,7 +240,11 @@ describe('SocialProvider: LinkedIn organization pages', () => {
 	it('classifies LinkedIn posts', () => {
 		expect(classifyLinkedInPost({ content: { multiImage: {} } })).toBe('CAROUSEL');
 		expect(classifyLinkedInPost({ content: { media: { id: 'urn:li:video:1' } } })).toBe('VIDEO');
-		expect(classifyLinkedInPost({ content: { media: { id: 'urn:li:image:1' } } })).toBe('POST');
+		expect(classifyLinkedInPost({ content: { media: { id: 'urn:li:image:1' } } })).toBe('IMAGE');
+		expect(classifyLinkedInPost({ content: { media: { id: 'urn:li:document:1' } } })).toBe('DOCUMENT');
+		expect(classifyLinkedInPost({ content: { article: { title: 'Read this' } } })).toBe('ARTICLE');
+		expect(classifyLinkedInPost({ content: { poll: {} } })).toBe('POLL');
+		expect(classifyLinkedInPost({})).toBe('TEXT');
 	});
 
 	it('connects an administered organization and syncs posts with measured statistics only', async () => {
@@ -253,7 +262,7 @@ describe('SocialProvider: LinkedIn organization pages', () => {
 		expect(account).toMatchObject({ platform: 'linkedin', platform_account_id: '111', account_username: 'acme' });
 		const items = await ContentItem.find({ connectedAccountId: account.id }).sort({ publishedAt: 1 }).lean();
 		expect(items.map((i) => [i.format, i.metrics.likes, i.metrics.comments, i.metrics.reach, i.metrics.shares])).toEqual([
-			['POST', 35, 4, 1500, 3],
+			['TEXT', 35, 4, 1500, 3],
 			['VIDEO', null, 0, null, null],
 		]);
 		expect(items[0].extraMetrics).toEqual({ impressions: 2000, clicks: 60 });

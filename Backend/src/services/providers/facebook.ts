@@ -49,11 +49,21 @@ async function listPages(userToken: string, fetchImpl: typeof fetch): Promise<Co
 
 export function classifyFacebookPost(post: { status_type?: string; attachments?: { data?: Array<{ media_type?: string; type?: string }> } }): ContentFormat {
 	const attachment = post.attachments?.data?.[0];
-	const mediaType = attachment?.media_type?.toLowerCase();
-	const type = attachment?.type?.toLowerCase() ?? '';
-	if (mediaType === 'album' || type === 'album') return 'CAROUSEL';
+	if (!attachment) {
+		// Without attachments the post's status_type still says what was published.
+		if (post.status_type === 'added_photos') return 'IMAGE';
+		if (post.status_type === 'added_video') return 'VIDEO';
+		if (post.status_type === 'shared_story') return 'LINK';
+		return 'TEXT';
+	}
+	const mediaType = attachment.media_type?.toLowerCase() ?? '';
+	const type = attachment.type?.toLowerCase() ?? '';
+	if (mediaType === 'album' || type === 'album' || type === 'multiple') return 'CAROUSEL';
 	if (type.includes('reel')) return 'REEL';
-	if (mediaType === 'video' || post.status_type === 'added_video') return 'VIDEO';
+	if (type.includes('live')) return 'LIVE';
+	if (mediaType === 'video' || type.startsWith('video') || post.status_type === 'added_video') return 'VIDEO';
+	if (mediaType === 'photo' || type === 'photo' || type === 'cover_photo' || type === 'profile_media') return 'IMAGE';
+	if (mediaType === 'link' || type === 'link' || type === 'share') return 'LINK';
 	return 'POST';
 }
 

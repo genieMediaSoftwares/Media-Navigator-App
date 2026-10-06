@@ -4,6 +4,7 @@ import { createApp } from './app';
 import { loadConfig, setConfig } from './config/env';
 import { connectMongo, disconnectMongo, mongoDatabaseName } from './db/mongo';
 import { redactSecrets } from './lib/redact';
+import { startSyncScheduler } from './services/syncScheduler';
 
 async function main(): Promise<void> {
 	const config = loadConfig();
@@ -17,8 +18,11 @@ async function main(): Promise<void> {
 		console.log(`Media Navigator API listening on http://${config.HOST}:${config.PORT} (${config.NODE_ENV})`);
 	});
 
+	const stopScheduler = startSyncScheduler();
+
 	const shutdown = (signal: string) => {
 		console.log(`${signal} received, shutting down`);
+		stopScheduler();
 		server.close(() => {
 			disconnectMongo().finally(() => process.exit(0));
 		});

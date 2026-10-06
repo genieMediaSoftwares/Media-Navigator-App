@@ -23,6 +23,10 @@ export interface ConnectedAccountDoc {
 	tokenReference: string;
 	tokenExpiresAt: Date | null;
 	lastSyncedAt: Date | null;
+	/** Last run that walked every page (status completed, mode full). Older posts' metrics refresh on full runs. */
+	lastFullSyncAt: Date | null;
+	/** Lease held while a sync runs, so the scheduler and a manual sync never run concurrently. */
+	syncLeaseUntil: Date | null;
 	createdAt: Date;
 	updatedAt: Date;
 }
@@ -40,6 +44,8 @@ const connectedAccountSchema = new Schema<ConnectedAccountDoc>(
 		tokenReference: { type: String, required: true },
 		tokenExpiresAt: { type: Date, default: null },
 		lastSyncedAt: { type: Date, default: null },
+		lastFullSyncAt: { type: Date, default: null },
+		syncLeaseUntil: { type: Date, default: null },
 		createdAt: { type: Date, required: true },
 		updatedAt: { type: Date, required: true },
 	},

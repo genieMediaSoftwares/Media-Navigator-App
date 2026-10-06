@@ -1,4 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { useLocalSearchParams } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Pressable, ScrollView, Text } from 'react-native';
 
@@ -39,7 +40,14 @@ function AccountChips({ accounts, selectedId, onSelect }: { accounts: Intelligen
 }
 
 export default function PlannerScreen() {
-  const [accountId, setAccountId] = useState<string | null>(null);
+  // The dashboard's "Heat maps" link opens the planner on its account.
+  const params = useLocalSearchParams<{ accountId?: string }>();
+  const [accountId, setAccountId] = useState<string | null>(params.accountId || null);
+  const [seenAccountParam, setSeenAccountParam] = useState(params.accountId);
+  if (seenAccountParam !== params.accountId) {
+    setSeenAccountParam(params.accountId);
+    if (params.accountId) setAccountId(params.accountId);
+  }
   const fetcher = useCallback(() => fetchPlannerInsights(accountId), [accountId]);
   const { state, refreshing, reload, refresh } = useApiResource(fetcher);
   const loaded = state.status === 'success' ? state.data : null;
@@ -53,7 +61,7 @@ export default function PlannerScreen() {
         onRetry={reload}
         loading={<LoadingState message="Loading publishing data…" />}
         unavailable={{ icon: 'calendar-outline', title: 'No publishing insights available yet.' }}
-        isEmpty={(insights) => insights.heatmap.length === 0 && insights.recommendedWindows.length === 0}
+        isEmpty={(insights) => insights.heatmap.length === 0 && insights.recommendedWindows.length === 0 && !insights.recommendation?.sufficient}
         empty={
           <EmptyState
             icon="calendar-outline"

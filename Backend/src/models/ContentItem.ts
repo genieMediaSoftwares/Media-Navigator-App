@@ -3,7 +3,13 @@ import { model, Schema } from 'mongoose';
 import { PLATFORMS, Platform } from './ConnectedAccount';
 import { newId } from './ids';
 
-export const CONTENT_FORMATS = ['REEL', 'POST', 'CAROUSEL', 'VIDEO', 'STORY'] as const;
+/**
+ * Content types in each platform's own vocabulary. Instagram: REEL, POST (photo), CAROUSEL, VIDEO, STORY.
+ * Facebook: TEXT, IMAGE, VIDEO, REEL, LINK, LIVE, CAROUSEL (album). YouTube: VIDEO, LIVE (the API does not
+ * identify Shorts). LinkedIn: TEXT, IMAGE, VIDEO, ARTICLE, DOCUMENT, POLL, CAROUSEL (multi-image).
+ * POST remains the fallback for a type the platform did not describe.
+ */
+export const CONTENT_FORMATS = ['REEL', 'POST', 'CAROUSEL', 'VIDEO', 'STORY', 'TEXT', 'IMAGE', 'LINK', 'LIVE', 'ARTICLE', 'DOCUMENT', 'POLL'] as const;
 export type ContentFormat = (typeof CONTENT_FORMATS)[number];
 
 /**

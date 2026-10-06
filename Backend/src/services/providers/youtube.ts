@@ -41,6 +41,14 @@ async function tokenRequest(params: Record<string, string>, fetchImpl: typeof fe
 	});
 }
 
+/** ISO 8601 duration ("PT1H2M3S", "P1DT2H") → seconds; null when absent or unparseable. */
+export function parseIsoDuration(value: string | undefined): number | null {
+	const match = value ? /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$/.exec(value) : null;
+	if (!match || value === 'P' || value === 'PT') return null;
+	const [, d, h, m, s] = match;
+	return Number(d ?? 0) * 86_400 + Number(h ?? 0) * 3_600 + Number(m ?? 0) * 60 + Math.round(Number(s ?? 0));
+}
+
 function authHeaders(credentials: PlatformCredentials) {
 	return { Authorization: `Bearer ${credentials.accessToken}` };
 }
@@ -90,16 +98,20 @@ async function pullChannel(channelId: string, credentials: PlatformCredentials, 
 		const res = await requestJson<{
 			items?: Array<{
 				id: string;
-				snippet?: { title?: string; description?: string; publishedAt?: string; thumbnails?: Record<string, { url?: string }> };
+				snippet?: { title?: string; description?: string; publishedAt?: string; liveBroadcastContent?: string; thumbnails?: Record<string, { url?: string }> };
 				statistics?: { viewCount?: string; likeCount?: string; commentCount?: string };
+				contentDetails?: { duration?: string };
+				liveStreamingDetails?: Record<string, unknown>;
 			}>;
-		}>(`${config.YOUTUBE_DATA_API_BASE_URL}/videos?part=snippet,statistics&id=${videoIds.slice(i, i + 50).join(',')}`, { headers: authHeaders(credentials), fetchImpl });
+		}>(`${config.YOUTUBE_DATA_API_BASE_URL}/videos?part=snippet,statistics,contentDetails,liveStreamingDetails&id=${videoIds.slice(i, i + 50).join(',')}`, { headers: authHeaders(credentials), fetchImpl });
 		for (const video of res.items ?? []) {
 			const stats = analytics.get(video.id);
 			const published = video.snippet?.publishedAt ? new Date(video.snippet.publishedAt) : null;
 			content.push({
 				platformContentId: video.id,
-				format: 'VIDEO',
+				// liveStreamingDetails exists only for upcoming, live or completed live broadcasts. The API has no
+				// field that identifies Shorts, so other uploads stay VIDEO rather than being guessed.
+				format: video.liveStreamingDetails || (video.snippet?.liveBroadcastContent ?? 'none') !== 'none' ? 'LIVE' : 'VIDEO',
 				mediaType: 'VIDEO',
 				title: video.snippet?.title ?? null,
 				caption: video.snippet?.title ?? null,
@@ -114,7 +126,10 @@ async function pullChannel(channelId: string, credentials: PlatformCredentials, 
 					comments: metricNumber(video.statistics?.commentCount),
 				},
 				insights: stats ? { shares: stats.shares } : null,
-				extraMetrics: stats ? { estimatedMinutesWatched: stats.minutesWatched, averageViewDurationSeconds: stats.averageViewDuration } : null,
+				extraMetrics: {
+					durationSeconds: parseIsoDuration(video.contentDetails?.duration),
+					...(stats ? { estimatedMinutesWatched: stats.minutesWatched, averageViewDurationSeconds: stats.averageViewDuration } : {}),
+				},
 			});
 		}
 	}

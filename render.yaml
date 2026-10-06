@@ -102,8 +102,13 @@ services:
         value: "20000"
       - key: MEDIA_PAGE_SIZE
         value: "25"
+      # Safety ceiling only: 400 × 25 covers Instagram's 10,000-media maximum.
       - key: MAX_MEDIA_PAGES
-        value: "8"
+        value: "400"
+      - key: AUTO_SYNC_INTERVAL_MS
+        value: "21600000"
+      - key: FULL_SYNC_INTERVAL_MS
+        value: "86400000"
       - key: FACEBOOK_POSTS_PAGE_SIZE
         value: "25"
       - key: FACEBOOK_MAX_POST_PAGES

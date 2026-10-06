@@ -4,7 +4,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 
 import { allowedCorsOrigins, getConfig } from './config/env';
-import { MAX_JSON_BODY_BYTES } from './lib/http';
+import { MAX_JSON_BODY_BYTES, ok } from './lib/http';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { apiRateLimit } from './middleware/rateLimit';
 import './models';
@@ -19,6 +19,7 @@ import { profileRouter } from './routes/profile';
 
 /** Path patterns and methods, used only to answer 405 (with Allow) instead of 404 for a wrong method. */
 const KNOWN_ROUTES: Array<{ pattern: RegExp; methods: string[] }> = [
+	{ pattern: /^\/$/, methods: ['GET'] },
 	{ pattern: /^\/health$/, methods: ['GET'] },
 	{ pattern: /^\/api\/auth\/(signup|login|logout|forgot-password|change-password|logout-others|delete-account)$/, methods: ['POST'] },
 	{ pattern: /^\/api\/auth\/(me|sessions)$/, methods: ['GET'] },
@@ -78,6 +79,10 @@ export function createApp(): Express {
 	app.use('/api', apiRateLimit(config.API_RATE_LIMIT));
 	app.use(express.json({ limit: MAX_JSON_BODY_BYTES }));
 
+	/** GET / — what this server is, for anyone opening the base URL in a browser. Reveals no configuration. */
+	app.get('/', (_req, res) => {
+		ok(res, { service: 'Media Navigator API', status: 'running', health: '/health' });
+	});
 	app.use('/health', healthRouter());
 	app.use('/api/auth', authRouter());
 	app.use('/api/accounts', accountsRouter());

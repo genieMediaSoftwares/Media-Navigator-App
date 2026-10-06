@@ -10,6 +10,9 @@ const mapValues = (object, fn) => Object.fromEntries(Object.entries(object).map(
 module.exports = {
   content: ['./src/**/*.{js,jsx,ts,tsx}'],
   presets: [require('nativewind/preset')],
+  // The app is light-only (app.json userInterfaceStyle). With the default 'media' strategy NativeWind
+  // throws on web when Expo applies that setting ("Cannot manually set color scheme").
+  darkMode: 'class',
   theme: {
     extend: {
       colors: palette,

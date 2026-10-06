@@ -35,7 +35,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const restoreSession = useCallback(async () => {
     setState({ status: 'loading' });
-    const token = await getSecureItem(SecureStorageKey.AuthToken);
+    let token: string | null = null;
+    try {
+      token = await getSecureItem(SecureStorageKey.AuthToken);
+    } catch {
+      // Unreadable secure storage must not leave the app on the splash screen: treat it as signed out.
+      token = null;
+    }
     if (!token) {
       setState({ status: 'unauthenticated' });
       return;

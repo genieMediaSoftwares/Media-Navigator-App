@@ -11,7 +11,7 @@ import { IconButton } from '@/components/ui/IconButton';
 import { syncAccount } from '@/features/accounts/api';
 import { accountHref, platformOption } from '@/features/accounts/platforms';
 import { fetchIntelligenceOverview } from '@/features/intelligence/api';
-import { IntelligenceContent } from '@/features/intelligence/components/IntelligenceContent';
+import { AnalysisSection, IntelligenceContent } from '@/features/intelligence/components/IntelligenceContent';
 import { IntelligenceSkeleton } from '@/features/intelligence/components/IntelligenceSkeleton';
 import { SyncState, SyncStatus } from '@/features/intelligence/components/SyncStatus';
 import { intelligenceSession } from '@/features/intelligence/session';
@@ -19,11 +19,24 @@ import { useApiResource } from '@/hooks/useApiResource';
 import { ApiError } from '@/lib/api/client';
 import { MetricDefinitions } from '@/types/api';
 
+function isSection(value: string | undefined): value is AnalysisSection {
+  return value === 'top' || value === 'improve' || value === 'trends';
+}
+
 export default function IntelligenceScreen() {
   const router = useRouter();
   // An account screen can open Intelligence on a specific account; otherwise the server picks the default.
-  const params = useLocalSearchParams<{ accountId?: string }>();
+  const params = useLocalSearchParams<{ accountId?: string; section?: string }>();
   const [accountId, setAccountId] = useState<string | null>(params.accountId || null);
+  const [section, setSection] = useState<AnalysisSection>(isSection(params.section) ? params.section : 'top');
+
+  // Links from Home (e.g. "AI trends") switch the section and account of an already-mounted tab.
+  const [seenParams, setSeenParams] = useState({ section: params.section, accountId: params.accountId });
+  if (seenParams.section !== params.section || seenParams.accountId !== params.accountId) {
+    setSeenParams({ section: params.section, accountId: params.accountId });
+    if (isSection(params.section)) setSection(params.section);
+    if (params.accountId) setAccountId(params.accountId);
+  }
   const fetcher = useCallback(() => fetchIntelligenceOverview(accountId), [accountId]);
   const { state, refreshing, reload, refresh } = useApiResource(fetcher);
   const [sync, setSync] = useState<SyncState>({ status: 'idle' });
@@ -59,7 +72,7 @@ export default function IntelligenceScreen() {
   return (
     <TabScreen
       showLogo
-      title="Intelligence"
+      title={overview ? `${platform.name} Analysis` : 'Analysis'}
       headerRight={overview ? <IconButton icon="ellipsis-horizontal" accessibilityLabel="More options" onPress={() => setMenuOpen(true)} /> : undefined}
       refreshing={refreshing}
       onRefresh={refresh}
@@ -92,10 +105,13 @@ export default function IntelligenceScreen() {
             <IntelligenceContent
               overview={data.overview}
               accounts={data.accounts}
+              section={section}
+              onSectionChange={setSection}
               onSelectAccount={setAccountId}
-              onSync={() => void runSync()}
-              syncing={sync.status === 'syncing'}
-              onExplain={() => setDefinitions(data.overview?.definitions ?? null)}
+              onSynced={() => {
+                if (data.overview) intelligenceSession.clearAccount(data.overview.account.id);
+                void refresh();
+              }}
             />
           ) : null
         }

@@ -94,3 +94,26 @@ media fields, the analytics baseline, and that credentials decrypt.
 ## API
 
 Unchanged paths and envelope. Full endpoint matrix: `docs/MIGRATION_REPORT.md`.
+
+### Sync
+
+- `POST /api/accounts/:id/sync?mode=full|incremental` — without `mode` the server picks: **full** (every page
+  Instagram returns, at most its 10,000 most recent media, refreshing every post's metrics) when the last
+  complete full sync is older than `FULL_SYNC_INTERVAL_MS`, otherwise **incremental** (new posts plus metrics of
+  posts from the last `METRICS_REFRESH_DAYS`). Upserts are keyed on account + platform content id, so re-syncs
+  never duplicate posts. A run stopped by Meta throttling or a page error is stored as `partial` and keeps what it
+  fetched. One sync per account at a time (409 `SYNC_IN_PROGRESS`).
+- `GET /api/accounts/:id/sync-status` — last run, stored vs profile-reported counts, notes.
+- Background sync: every `SYNC_SCHEDULER_TICK_MS` the API syncs connected accounts older than
+  `AUTO_SYNC_INTERVAL_MS` (`0` disables). It runs in the API process, so hosts that sleep idle instances pause it.
+
+### Analysis (deterministic; `services/analytics.ts`)
+
+`GET /api/intelligence/dashboard`, `/timing`, `/performers?type=top|improve`, `/trends`, and the `analysis` block of
+`/media/:id`. Performance score = weighted percentile of the metrics Instagram returned (see `SCORE_DEFINITION`).
+
+### AI (Gemini; `services/aiAnalysis.ts`, labelled as interpretation in the app)
+
+`GET /api/intelligence/media/:id/performance-analysis` (why top / why it needs improvement; uses the cover image),
+`/media/:id/video-analysis` (Gemini watches the video; files over 15 MB go through the Files API, limit
+`VIDEO_ANALYSIS_MAX_BYTES`), `/trends/ai`. All cached per sync and counted against `AI_REQUESTS_PER_HOUR`.

@@ -16,7 +16,7 @@ const ASK_HISTORY_LIMIT = 10;
 const CAPTION_CHARS = 280;
 const MAX_CONTEXT_POSTS = 120;
 
-function systemInstruction(snapshot: IntelligenceSnapshot): string {
+export function systemInstruction(snapshot: IntelligenceSnapshot): string {
 	const platform = platformName(snapshot.account.platform);
 	return `You are Media Navigator's analytics assistant for a ${platform} creator.
 You receive ONLY metrics from the creator's connected ${platform} account, as JSON.
@@ -160,11 +160,11 @@ export function buildAiContext(snapshot: IntelligenceSnapshot, posts: Intelligen
 
 // ---- Validation --------------------------------------------------------------
 
-function text(value: unknown, max = 600): string {
+export function text(value: unknown, max = 600): string {
 	return typeof value === 'string' ? value.trim().slice(0, max) : '';
 }
 
-function textList(value: unknown, maxItems = 6): string[] {
+export function textList(value: unknown, maxItems = 6): string[] {
 	return Array.isArray(value) ? value.map((v) => text(v, 240)).filter(Boolean).slice(0, maxItems) : [];
 }
 
@@ -200,7 +200,7 @@ function resolveEvidence(snapshot: IntelligenceSnapshot, postIds: unknown, forma
 
 // ---- Cache & rate limit ------------------------------------------------------------
 
-async function cached<T>(
+export async function cached<T>(
 	key: string,
 	owner: { userId: string; accountId: string },
 	now: number,

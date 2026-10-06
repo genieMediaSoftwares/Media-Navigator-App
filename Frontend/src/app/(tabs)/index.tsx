@@ -29,7 +29,7 @@ export default function HomeScreen() {
     <TabScreen
       showLogo
       eyebrow={displayName ? `Welcome back, ${displayName}` : 'Welcome back'}
-      title="Social Overview"
+      title="Dashboard"
       headerRight={<IconButton icon="notifications-outline" accessibilityLabel="Notifications" onPress={() => router.push('/notifications')} />}
       refreshing={refreshing}
       onRefresh={refresh}

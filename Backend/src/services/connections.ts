@@ -1,14 +1,16 @@
 import { getConfig } from '../config/env';
 import {
+	acquireSyncLease,
 	ConnectedAccountRow,
 	deleteConnectedAccount,
 	findAccountById,
 	findAccountByPlatformAndAccountId,
+	releaseSyncLease,
 	upsertConnectedAccount,
 } from '../db/accounts';
 import { deleteAccountData } from '../db/content';
 import { HttpError } from '../lib/http';
-import { PendingConnection, PendingOption, Platform } from '../models';
+import { PendingConnection, PendingOption, Platform, SyncMode } from '../models';
 import { decryptJson, deletePlatformCredentials, encryptJson, PlatformCredentials, storePlatformCredentials } from './credentials';
 import type { SyncSummary } from './instagramSync';
 import { computeBaseline, interactionsOf } from './intelligence';
@@ -212,18 +214,40 @@ export async function disconnectAccount(userId: string, accountId: string, now: 
 
 const AUTH_ERROR_CODES = new Set(['REAUTHORIZATION_REQUIRED', 'INVALID_TOKEN']);
 
-/** Syncs one account through its platform adapter and records the outcome as notifications. */
-export async function syncConnectedAccount(userId: string, accountId: string, now: number, fetchImpl: typeof fetch = fetch): Promise<SyncSummary> {
+/**
+ * Syncs one account through its platform adapter and records the outcome as notifications. Only one
+ * sync per account runs at a time (manual and scheduled syncs share a lease): a second request gets
+ * 409 SYNC_IN_PROGRESS instead of fetching the same pages twice.
+ */
+export async function syncConnectedAccount(
+	userId: string,
+	accountId: string,
+	now: number,
+	fetchImpl: typeof fetch = fetch,
+	options: { mode?: SyncMode } = {},
+): Promise<SyncSummary> {
 	const account = await requireOwnedAccount(userId, accountId);
+	if (!(await acquireSyncLease(account.id, Date.now(), getConfig().SYNC_LEASE_MS))) {
+		throw new HttpError(409, 'SYNC_IN_PROGRESS', `@${account.account_username} is already syncing. Results will appear when it finishes.`);
+	}
+	try {
+		return await runSync(userId, account, now, fetchImpl, options);
+	} finally {
+		await releaseSyncLease(account.id);
+	}
+}
+
+async function runSync(userId: string, account: ConnectedAccountRow, now: number, fetchImpl: typeof fetch, options: { mode?: SyncMode }): Promise<SyncSummary> {
 	const name = platformName(account.platform);
 	try {
-		const result = await getProvider(account.platform).sync(account, now, fetchImpl);
+		const result = await getProvider(account.platform).sync(account, now, fetchImpl, options);
 		await Promise.all([clearNotification(userId, `expired:${account.id}`), clearNotification(userId, `syncfail:${account.id}`)]);
+		const partial = result.status === 'partial' ? ` Sync was partial: ${result.message ?? 'some content could not be fetched.'}` : '';
 		await notify(userId, {
 			event: 'sync_completed',
 			kind: 'account',
-			title: `${name} sync completed`,
-			body: `Synced ${result.postsSynced} ${result.postsSynced === 1 ? 'item' : 'items'} from @${account.account_username}.`,
+			title: result.status === 'partial' ? `${name} sync partially completed` : `${name} sync completed`,
+			body: `Synced ${result.postsSynced} ${result.postsSynced === 1 ? 'item' : 'items'} from @${account.account_username}${result.newPosts ? ` (${result.newPosts} new)` : ''}.${partial}`,
 			connectedAccountId: account.id,
 			dedupeKey: `sync:${account.id}`,
 			now,

@@ -10,6 +10,7 @@ import {
 	ContentItemDoc,
 	ContentMetrics,
 	Platform,
+	SyncMode,
 	SyncRun,
 	SyncRunDoc,
 } from '../models';
@@ -165,19 +166,71 @@ function upsertOperation(
 	};
 }
 
-/** Idempotent upsert of one page of content, in a single round trip. */
+/**
+ * Idempotent upsert of one page of content, in a single round trip. Re-syncing a post updates it in
+ * place (unique on account + platform content id); `inserted` counts posts stored for the first time.
+ */
 export async function upsertContentItems(
 	userId: string,
 	connectedAccountId: string,
 	platform: Platform,
 	items: ContentInput[],
 	now: number,
-): Promise<void> {
-	if (items.length === 0) return;
-	await ContentItem.bulkWrite(
+): Promise<{ inserted: number; updated: number }> {
+	if (items.length === 0) return { inserted: 0, updated: 0 };
+	const result = await ContentItem.bulkWrite(
 		items.map((item) => upsertOperation(userId, connectedAccountId, platform, item, now)),
 		{ ordered: false },
 	);
+	return { inserted: result.upsertedCount, updated: result.matchedCount };
+}
+
+/** Which of these platform content ids are already stored for the account. */
+export async function findKnownContentIds(connectedAccountId: string, platformContentIds: string[]): Promise<Set<string>> {
+	if (platformContentIds.length === 0) return new Set();
+	const docs = await ContentItem.find({ connectedAccountId, platformContentId: { $in: platformContentIds } }, { platformContentId: 1 }).lean<
+		Array<Pick<ContentItemDoc, 'platformContentId'>>
+	>();
+	return new Set(docs.map((d) => d.platformContentId));
+}
+
+/**
+ * Merges platform-specific extra metrics (e.g. Reels watch time) into stored items without touching
+ * other fields. Null values are not written, so a failed call never erases a stored value.
+ */
+export async function mergeExtraMetrics(
+	connectedAccountId: string,
+	updates: Array<{ platformContentId: string; values: Record<string, number | null> }>,
+): Promise<void> {
+	const operations: AnyBulkWriteOperation<ContentItemDoc>[] = [];
+	for (const { platformContentId, values } of updates) {
+		const present = Object.fromEntries(Object.entries(values).filter(([, v]) => v !== null));
+		if (Object.keys(present).length === 0) continue;
+		// Pipeline update: merges whether extraMetrics is currently null or an object.
+		operations.push({
+			updateOne: {
+				filter: { connectedAccountId, platformContentId },
+				update: [{ $set: { extraMetrics: { $mergeObjects: [{ $ifNull: ['$extraMetrics', {}] }, { $literal: present }] } } }],
+			},
+		} as AnyBulkWriteOperation<ContentItemDoc>);
+	}
+	if (operations.length > 0) await ContentItem.bulkWrite(operations, { ordered: false });
+}
+
+/** Reels that need watch-time metrics: never fetched, or recent enough that the values still change. */
+export async function findReelsNeedingWatchMetrics(connectedAccountId: string, recentSince: Date, limit: number): Promise<string[]> {
+	const docs = await ContentItem.find(
+		{
+			connectedAccountId,
+			format: 'REEL',
+			$or: [{ 'extraMetrics.avgWatchTimeMs': { $exists: false } }, { publishedAt: { $gte: recentSince } }],
+		},
+		{ platformContentId: 1 },
+	)
+		.sort({ publishedAt: -1 })
+		.limit(limit)
+		.lean<Array<Pick<ContentItemDoc, 'platformContentId'>>>();
+	return docs.map((d) => d.platformContentId);
 }
 
 export interface AccountInsightRow {
@@ -231,19 +284,25 @@ export async function getAccountInsights(connectedAccountId: string): Promise<Ac
 export interface SyncRunRow {
 	id: string;
 	connected_account_id: string;
-	status: 'running' | 'completed' | 'failed';
+	status: SyncRunDoc['status'];
+	mode: SyncMode;
 	started_at: number;
 	completed_at: number | null;
 	items_fetched: number;
+	pages_fetched: number;
+	new_items: number;
+	reached_end: boolean;
+	profile_media_count: number | null;
 	error_code: string | null;
 	error_message: string | null;
 	created_at: number;
 }
 
-export async function createSyncRun(connectedAccountId: string, now: number): Promise<string> {
+export async function createSyncRun(connectedAccountId: string, now: number, mode: SyncMode = 'full'): Promise<string> {
 	const run = await SyncRun.create({
 		connectedAccountId,
 		status: 'running',
+		mode,
 		startedAt: new Date(now),
 		completedAt: null,
 		itemsFetched: 0,
@@ -254,12 +313,20 @@ export async function createSyncRun(connectedAccountId: string, now: number): Pr
 	return run._id;
 }
 
+export interface SyncRunProgress {
+	pagesFetched?: number;
+	newItems?: number;
+	reachedEnd?: boolean;
+	profileMediaCount?: number | null;
+}
+
 export async function updateSyncRun(
 	syncRunId: string,
-	status: 'completed' | 'failed',
+	status: 'completed' | 'partial' | 'failed',
 	itemsFetched: number,
 	now: number,
 	error?: { code: string; message: string },
+	progress: SyncRunProgress = {},
 ): Promise<void> {
 	await SyncRun.updateOne(
 		{ _id: syncRunId },
@@ -270,6 +337,10 @@ export async function updateSyncRun(
 				itemsFetched,
 				errorCode: error?.code ?? null,
 				errorMessage: error?.message ?? null,
+				...(progress.pagesFetched !== undefined && { pagesFetched: progress.pagesFetched }),
+				...(progress.newItems !== undefined && { newItems: progress.newItems }),
+				...(progress.reachedEnd !== undefined && { reachedEnd: progress.reachedEnd }),
+				...(progress.profileMediaCount !== undefined && { profileMediaCount: progress.profileMediaCount }),
 			},
 		},
 	);
@@ -282,9 +353,14 @@ export async function getLastSyncRun(connectedAccountId: string): Promise<SyncRu
 		id: doc._id,
 		connected_account_id: doc.connectedAccountId,
 		status: doc.status,
+		mode: doc.mode ?? 'full',
 		started_at: doc.startedAt.getTime(),
 		completed_at: doc.completedAt ? doc.completedAt.getTime() : null,
 		items_fetched: doc.itemsFetched,
+		pages_fetched: doc.pagesFetched ?? 0,
+		new_items: doc.newItems ?? 0,
+		reached_end: doc.reachedEnd ?? false,
+		profile_media_count: doc.profileMediaCount ?? null,
 		error_code: doc.errorCode ?? null,
 		error_message: doc.errorMessage ?? null,
 		created_at: doc.createdAt.getTime(),
@@ -299,9 +375,12 @@ export async function getContentByAccountId(connectedAccountId: string, limit = 
 	return docs.map(toContentRow);
 }
 
-/** Every synced item for an account (bounded; a sync stores at most a few hundred items). */
+/**
+ * Every synced item for an account. Instagram's media edge returns at most the 10,000 most recent
+ * items, so the platform bounds this; the explicit ceiling only guards against bad data.
+ */
 export async function getAllContentByAccountId(connectedAccountId: string): Promise<ContentRow[]> {
-	return getContentByAccountId(connectedAccountId, 1000);
+	return getContentByAccountId(connectedAccountId, 20_000);
 }
 
 export async function findContentById(connectedAccountId: string, id: string): Promise<ContentRow | null> {

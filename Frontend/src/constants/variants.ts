@@ -22,15 +22,6 @@ export const inputVariants = {
   disabled: 'border-neutral-200 bg-neutral-50',
 } as const;
 
-export const cardVariants = {
-  /** Default content surface */
-  outlined: 'border border-neutral-200 bg-white',
-  /** Quiet grouped surface (empty states, secondary panels) */
-  filled: 'bg-neutral-50',
-  /** Brand emphasis (hero banner); use once per screen at most */
-  brand: 'bg-navy',
-} as const;
-
 export const noticeVariants = {
   error: { container: 'border-danger-border bg-danger-light', text: 'text-danger', icon: 'alert-circle-outline', color: colors.danger },
   warning: { container: 'border-warning-border bg-warning-light', text: 'text-warning', icon: 'warning-outline', color: colors.warning },

@@ -15,6 +15,7 @@ import {
 	syncConnectedAccount,
 } from '../services/connections';
 import { fetchAccountDashboard } from '../services/instagramSync';
+import { describeSyncStatus } from '../services/syncStatus';
 import { isPlatform } from '../services/platforms';
 
 function platformParam(value: unknown) {
@@ -108,9 +109,22 @@ export function accountsRouter(): Router {
 		ok(res, { message: 'Account disconnected successfully.' });
 	});
 
-	/** POST /api/accounts/:id/sync */
+	/**
+	 * POST /api/accounts/:id/sync?mode=full|incremental — without a mode the server picks: full when the
+	 * last complete full sync is older than FULL_SYNC_INTERVAL_MS, incremental otherwise.
+	 */
 	router.post('/:id/sync', async (req, res) => {
-		ok(res, await syncConnectedAccount(authOf(req).user.id, req.params.id as string, req.now));
+		const mode = queryParam(req, 'mode');
+		if (mode !== null && mode !== 'full' && mode !== 'incremental') {
+			throw new HttpError(400, 'VALIDATION_ERROR', 'Unsupported sync mode.', { mode: 'Use full or incremental.' });
+		}
+		ok(res, await syncConnectedAccount(authOf(req).user.id, req.params.id as string, req.now, fetch, mode ? { mode } : {}));
+	});
+
+	/** GET /api/accounts/:id/sync-status — last sync run and stored vs reported content counts. */
+	router.get('/:id/sync-status', async (req, res) => {
+		const account = await requireOwnedAccount(authOf(req).user.id, req.params.id as string);
+		ok(res, await describeSyncStatus(account));
 	});
 
 	/** GET /api/accounts/:id/dashboard — profile metrics and the latest 50 items. */

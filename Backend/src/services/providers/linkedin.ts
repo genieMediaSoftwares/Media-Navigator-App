@@ -90,12 +90,20 @@ interface Post {
 	publishedAt?: number;
 	createdAt?: number;
 	lifecycleState?: string;
-	content?: { media?: { id?: string }; multiImage?: unknown; article?: { title?: string }; poll?: unknown };
+	content?: { media?: { id?: string }; multiImage?: unknown; article?: { title?: string }; poll?: unknown; celebration?: unknown };
 }
 
 export function classifyLinkedInPost(post: Post): ContentFormat {
-	if (post.content?.multiImage) return 'CAROUSEL';
-	if (post.content?.media?.id?.startsWith('urn:li:video:')) return 'VIDEO';
+	const content = post.content;
+	// No content object (or an empty one): a text-only post.
+	if (!content || Object.keys(content).length === 0) return 'TEXT';
+	if (content.multiImage) return 'CAROUSEL';
+	if (content.poll) return 'POLL';
+	if (content.article) return 'ARTICLE';
+	const media = content.media?.id ?? '';
+	if (media.startsWith('urn:li:video:')) return 'VIDEO';
+	if (media.startsWith('urn:li:image:')) return 'IMAGE';
+	if (media.startsWith('urn:li:document:')) return 'DOCUMENT';
 	return 'POST';
 }
 

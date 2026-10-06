@@ -31,10 +31,12 @@ interface AccountHeaderProps {
   accounts: IntelligenceAccount[];
   syncedPosts: number;
   onSelect: (accountId: string) => void;
+  /** Hide "synced …" when the screen shows a SyncBar with the same information. */
+  hideSyncTime?: boolean;
 }
 
 /** Account selector + one-line summary. Lists only accounts the backend returned. */
-export function AccountHeader({ account, accounts, syncedPosts, onSelect }: AccountHeaderProps) {
+export function AccountHeader({ account, accounts, syncedPosts, onSelect, hideSyncTime = false }: AccountHeaderProps) {
   const [open, setOpen] = useState(false);
   const canSwitch = accounts.length > 1;
   const platform = platformOption(account.platform);
@@ -56,7 +58,7 @@ export function AccountHeader({ account, accounts, syncedPosts, onSelect }: Acco
           {canSwitch ? <Ionicons name="chevron-down" size={16} color={colors.neutral500} style={{ marginLeft: 4 }} /> : null}
         </Pressable>
         <Text className="text-caption text-neutral-500" numberOfLines={1}>
-          {platform.name} · {syncedPosts} posts analyzed · synced {formatRelativeTime(account.lastSyncedAt).toLowerCase()}
+          {platform.name} · {syncedPosts.toLocaleString()} posts analyzed{hideSyncTime ? '' : ` · synced ${formatRelativeTime(account.lastSyncedAt).toLowerCase()}`}
         </Text>
       </View>
 

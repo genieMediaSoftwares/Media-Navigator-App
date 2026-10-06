@@ -4,7 +4,8 @@ import { getPreferences } from '../db/users';
 import { HttpError, ok, queryParam } from '../lib/http';
 import { authOf, requireAuth } from '../middleware/auth';
 import { resolveTimeZone } from '../services/intelligence';
-import { loadIntelligenceSnapshot, resolveAnalyticsAccount } from '../services/intelligenceSnapshot';
+import { computeHeatmap } from '../services/analytics';
+import { loadIntelligenceSnapshot, resolveAnalyticsAccount, snapshotInsights } from '../services/intelligenceSnapshot';
 import { platformName } from '../services/platforms';
 import { accountSummary } from './intelligence';
 
@@ -24,7 +25,9 @@ export function plannerRouter(): Router {
 		if (!account) throw new HttpError(501, 'FEATURE_NOT_AVAILABLE', 'Connect a social account to unlock personalized planning.');
 
 		const timeZone = resolveTimeZone(queryParam(req, 'tz') ?? (await getPreferences(userId)).timeZone);
-		const { timing, baseline, tiers } = await loadIntelligenceSnapshot(account, timeZone, req.now);
+		const snapshot = await loadIntelligenceSnapshot(account, timeZone, req.now);
+		const { timing, baseline, tiers } = snapshot;
+		const { recommendation } = snapshotInsights(snapshot);
 		const name = platformName(account.platform);
 		ok(res, {
 			timezone: timing.timezone,
@@ -45,6 +48,10 @@ export function plannerRouter(): Router {
 			})),
 			/** Measured comparison points for the windows above. */
 			baseline: { avgInteractions: baseline.avgInteractions, typicalInteractions: tiers.typicalInteractions },
+			/** Best day / time with confidence and the measured reasons (services/analytics.ts). */
+			recommendation,
+			/** Day × time heat maps per metric (performance score, views, likes, engagement rate). */
+			heatmaps: Object.fromEntries((['score', 'views', 'likes', 'engagementRate'] as const).map((metric) => [metric, computeHeatmap(snapshot.analytics, metric)])),
 			account: accountSummary(account),
 			accounts: accounts.map(accountSummary),
 			scheduling: {

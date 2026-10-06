@@ -73,6 +73,22 @@ const schema = z.object({
 	HTTP_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive('HTTP_REQUEST_TIMEOUT_MS must be a positive integer.'),
 	MEDIA_PAGE_SIZE: z.coerce.number().int().positive('MEDIA_PAGE_SIZE must be a positive integer.'),
 	MAX_MEDIA_PAGES: z.coerce.number().int().positive('MAX_MEDIA_PAGES must be a positive integer.'),
+	/**
+	 * Sync cadence. Defaults let existing deployments start without new settings.
+	 * A full sync walks every page (Instagram returns at most the 10,000 most recent media) and refreshes
+	 * every post's metrics; incremental syncs in between fetch new posts and refresh posts published in
+	 * the last METRICS_REFRESH_DAYS.
+	 */
+	FULL_SYNC_INTERVAL_MS: z.coerce.number().int().positive().default(24 * 60 * 60 * 1000),
+	METRICS_REFRESH_DAYS: z.coerce.number().int().positive().default(30),
+	/** Background sync for every connected account when its last sync is older than this. 0 disables it. */
+	AUTO_SYNC_INTERVAL_MS: z.coerce.number().int().min(0).default(6 * 60 * 60 * 1000),
+	SYNC_SCHEDULER_TICK_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
+	SYNC_LEASE_MS: z.coerce.number().int().positive().default(20 * 60 * 1000),
+	/** Per-Reel watch-time insight requests per sync (one request per Reel; the rest follow on later syncs). */
+	REEL_WATCH_METRICS_PER_SYNC: z.coerce.number().int().min(0).default(60),
+	/** Largest video downloaded for Deep Video Analysis. */
+	VIDEO_ANALYSIS_MAX_BYTES: z.coerce.number().int().positive().default(80 * 1024 * 1024),
 	FACEBOOK_POSTS_PAGE_SIZE: z.coerce.number().int().positive('FACEBOOK_POSTS_PAGE_SIZE must be a positive integer.'),
 	FACEBOOK_MAX_POST_PAGES: z.coerce.number().int().positive('FACEBOOK_MAX_POST_PAGES must be a positive integer.'),
 	YOUTUBE_MAX_VIDEOS: z.coerce.number().int().positive('YOUTUBE_MAX_VIDEOS must be a positive integer.'),

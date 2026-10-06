@@ -19,7 +19,23 @@ import {
 	toIntelligencePost,
 	vsTypicalPercent,
 } from '../services/intelligence';
-import { IntelligenceSnapshot, loadIntelligenceSnapshot, resolveAnalyticsAccount } from '../services/intelligenceSnapshot';
+import { getPerformanceAnalysis, getTrendInterpretation, getVideoAnalysis } from '../services/aiAnalysis';
+import {
+	computeComparisons,
+	computeDashboardSummary,
+	computeFrequencyPerformance,
+	computeHeatmap,
+	computePerformanceTrend,
+	explainPost,
+	formatName,
+	HeatmapMetric,
+	needsImprovement,
+	SCORE_DEFINITION,
+	ScoredPost,
+	topPerformers,
+} from '../services/analytics';
+import { IntelligenceSnapshot, loadIntelligenceSnapshot, resolveAnalyticsAccount, snapshotInsights } from '../services/intelligenceSnapshot';
+import { describeSyncStatus } from '../services/syncStatus';
 import { platformName } from '../services/platforms';
 
 // Intelligence API. Every number is computed from synced data in MongoDB (services/intelligence.ts);
@@ -55,6 +71,28 @@ function tierQuery(tier: TierFilter, tiers: TierThresholds, now: number) {
 		return { interactionRange: { lte: tiers.lowMax }, publishedBefore: new Date(now - 3 * 86_400_000) };
 	}
 	return { interactionRange: { lt: tiers.topMin, ...(tiers.lowMax !== null && { gt: tiers.lowMax }) }, publishedBefore: null };
+}
+
+const HEATMAP_METRICS: HeatmapMetric[] = ['score', 'views', 'likes', 'engagementRate', 'interactions'];
+
+function scoredPost(snapshot: IntelligenceSnapshot, id: string): ScoredPost | null {
+	return snapshot.analytics.posts.find((p) => p.id === id) ?? null;
+}
+
+/** top for posts at or above the account's typical score, improve below it; null when unscored. */
+function analysisKind(post: ScoredPost | null): 'top' | 'improve' | null {
+	if (!post || post.score === null) return null;
+	return post.score >= 50 ? 'top' : 'improve';
+}
+
+function isVideoPost(snapshot: IntelligenceSnapshot, post: ScoredPost): boolean {
+	if (post.format === 'REEL' || post.format === 'VIDEO') return true;
+	return snapshot.rows.find((r) => r.id === post.id)?.media_type === 'VIDEO';
+}
+
+function percentDiff(value: number | null, reference: number | null): number | null {
+	if (value === null || reference === null || reference <= 0) return null;
+	return Math.round(((value - reference) / reference) * 1000) / 10;
 }
 
 function noAccount(): HttpError {
@@ -135,6 +173,7 @@ export function intelligenceRouter(): Router {
 					: null,
 				aiConfigured: isAiConfigured(),
 				definitions: metricDefinitionsFor(platformName(account.platform)),
+				sync: await describeSyncStatus(account, req.now),
 			},
 		});
 	});
@@ -201,9 +240,28 @@ export function intelligenceRouter(): Router {
 		const formatStats = snapshot.formats.find((f) => f.format === post.format) ?? null;
 		const formatAvg = formatStats?.avgInteractions ?? null;
 
+		const scored = scoredPost(snapshot, post.id);
+		const kind = analysisKind(scored);
+		const { recommendation, trends } = snapshotInsights(snapshot);
+		const explained = scored && kind ? explainPost(snapshot.analytics, scored, kind, recommendation, trends) : { reasons: [], improvements: [] };
+
 		ok(res, {
 			post: withTier(post, snapshot.tiers, req.now),
 			account: accountSummary(snapshot.account),
+			/** Score, measured reasons and comparisons (services/analytics.ts). Additive. */
+			analysis: scored
+				? {
+						score: scored.score,
+						scoreBasis: scored.scoreBasis,
+						avgWatchTimeMs: scored.avgWatchTimeMs,
+						kind,
+						reasons: explained.reasons,
+						improvements: explained.improvements,
+						comparisons: computeComparisons(snapshot.analytics, scored),
+						isVideo: isVideoPost(snapshot, scored),
+						scoreDefinition: SCORE_DEFINITION,
+					}
+				: null,
 			classification: snapshot.ranking.sufficient ? classifyPost(snapshot, post) : 'insufficient',
 			comparison: {
 				accountAvgInteractions: snapshot.baseline.avgInteractions,
@@ -218,7 +276,9 @@ export function intelligenceRouter(): Router {
 						? Math.round(((post.interactions - formatAvg) / formatAvg) * 1000) / 10
 						: null,
 			},
-			observedFactors: observedFactors(post, snapshot.timing.timezone, snapshot.timing.windows),
+			observedFactors: observedFactors(post, snapshot.timing.timezone, snapshot.timing.windows).map((fact) =>
+				fact.label === 'Format' ? { ...fact, value: formatName(post.format, snapshot.account.platform).one } : fact,
+			),
 			aiConfigured: isAiConfigured(),
 			definitions: metricDefinitionsFor(platformName(snapshot.account.platform)),
 		});
@@ -232,6 +292,152 @@ export function intelligenceRouter(): Router {
 			throw new HttpError(422, 'INSUFFICIENT_DATA', 'Not enough historical data yet to compare this post with your account.');
 		}
 		ok(res, await getPostAnalysis(auth.user.id, snapshot, post, req.now));
+	});
+
+	/**
+	 * GET /api/intelligence/media/:id/performance-analysis?kind=top|improve — AI "Why it's top" /
+	 * "Why it needs improvement", grounded in the measured reasons (and the cover image when available).
+	 */
+	router.get('/media/:id/performance-analysis', async (req, res) => {
+		const auth = authOf(req);
+		const { snapshot, post } = await requirePost(req, auth.user.id);
+		const scored = scoredPost(snapshot, post.id);
+		const requested = queryParam(req, 'kind');
+		if (requested && requested !== 'top' && requested !== 'improve') throw new HttpError(400, 'VALIDATION_ERROR', 'Unsupported analysis kind.');
+		const kind = (requested as 'top' | 'improve' | null) ?? analysisKind(scored);
+		if (!scored || !kind) throw new HttpError(422, 'INSUFFICIENT_DATA', 'Not enough historical data yet to compare this post with your account.');
+		const { recommendation, trends } = snapshotInsights(snapshot);
+		const observed = explainPost(snapshot.analytics, scored, kind, recommendation, trends);
+		const comparisons = computeComparisons(snapshot.analytics, scored);
+		ok(res, { observed, ai: await getPerformanceAnalysis(auth.user.id, snapshot, scored, kind, observed, comparisons, req.now) });
+	});
+
+	/** GET /api/intelligence/media/:id/video-analysis — Deep Video Analysis (Gemini watches the video itself). */
+	router.get('/media/:id/video-analysis', async (req, res) => {
+		const auth = authOf(req);
+		const { snapshot, post } = await requirePost(req, auth.user.id);
+		const scored = scoredPost(snapshot, post.id);
+		if (!scored || !isVideoPost(snapshot, scored)) throw new HttpError(422, 'NOT_A_VIDEO', 'Deep video analysis is available for Reels and videos only.');
+		const comparisons = computeComparisons(snapshot.analytics, scored);
+		const observed = {
+			metrics: scored.metrics,
+			engagementRate: scored.engagementRate,
+			score: scored.score,
+			avgWatchTimeMs: scored.avgWatchTimeMs,
+			comparisons,
+		};
+		if (!isAiConfigured()) {
+			ok(res, { observed, ai: null, aiConfigured: false });
+			return;
+		}
+		ok(res, { observed, ai: await getVideoAnalysis(auth.user.id, snapshot, scored, comparisons, req.now), aiConfigured: true });
+	});
+
+	/** GET /api/intelligence/dashboard?accountId=&tz= — overview totals, trends over time and the next actions. */
+	router.get('/dashboard', async (req, res) => {
+		const { account, accounts } = await resolveAnalyticsAccount(authOf(req).user.id, queryParam(req, 'accountId'));
+		if (!account) {
+			ok(res, { accounts: accounts.map(accountSummary), dashboard: null });
+			return;
+		}
+		const snapshot = await loadIntelligenceSnapshot(account, resolveTimeZone(queryParam(req, 'tz')), req.now);
+		const { recommendation, tasks } = snapshotInsights(snapshot);
+		const summary = computeDashboardSummary(snapshot.analytics);
+		ok(res, {
+			accounts: accounts.map(accountSummary),
+			dashboard: {
+				account: accountSummary(account),
+				followers: snapshot.profile.followers,
+				sync: await describeSyncStatus(account, req.now),
+				summary: { ...summary, bestPost: summary.bestPost ? withTier(summary.bestPost, snapshot.tiers, req.now) : null },
+				trend: computePerformanceTrend(snapshot.analytics),
+				frequency: computeFrequencyPerformance(snapshot.analytics),
+				recommendation,
+				tasks: tasks.slice(0, 3),
+				accountInsights: { reach: snapshot.profile.reach, views: snapshot.profile.views, accountsEngaged: snapshot.profile.accountsEngaged },
+				scoreDefinition: SCORE_DEFINITION,
+				definitions: metricDefinitionsFor(platformName(account.platform)),
+				aiConfigured: isAiConfigured(),
+			},
+		});
+	});
+
+	/** GET /api/intelligence/timing?accountId=&tz= — heat maps per metric and the measured posting recommendation. */
+	router.get('/timing', async (req, res) => {
+		const snapshot = await requireSnapshot(req, authOf(req).user.id, queryParam(req, 'accountId'));
+		const { recommendation } = snapshotInsights(snapshot);
+		ok(res, {
+			account: accountSummary(snapshot.account),
+			recommendation,
+			heatmaps: Object.fromEntries(HEATMAP_METRICS.map((metric) => [metric, computeHeatmap(snapshot.analytics, metric)])),
+		});
+	});
+
+	/** GET /api/intelligence/performers?type=top|improve&format=&limit=&offset= — scored posts with their measured reasons. */
+	router.get('/performers', async (req, res) => {
+		const snapshot = await requireSnapshot(req, authOf(req).user.id, queryParam(req, 'accountId'));
+		const type = queryParam(req, 'type') ?? 'top';
+		if (type !== 'top' && type !== 'improve') throw new HttpError(400, 'VALIDATION_ERROR', 'Unsupported performer type.');
+		const formatParam = queryParam(req, 'format');
+		if (formatParam && !CONTENT_FORMATS.includes(formatParam as ContentFormat)) throw new HttpError(400, 'VALIDATION_ERROR', 'Unsupported format.');
+		const limit = Math.min(Math.max(Number(queryParam(req, 'limit') ?? 10) || 10, 1), 30);
+		const offset = Math.max(Number(queryParam(req, 'offset') ?? 0) || 0, 0);
+
+		const sufficient = snapshot.baseline.sampleSize >= MIN_POSTS_FOR_RANKING;
+		const ranked = (type === 'top' ? topPerformers(snapshot.analytics) : needsImprovement(snapshot.analytics)).filter(
+			(p) => !formatParam || p.format === formatParam,
+		);
+		const { recommendation, trends } = snapshotInsights(snapshot);
+		const kind = type === 'top' ? 'top' : 'improve';
+		const account = computeDashboardSummary(snapshot.analytics);
+		const items = sufficient
+			? ranked.slice(offset, offset + limit).map((post) => {
+					const explained = explainPost(snapshot.analytics, post, kind, recommendation, trends);
+					return {
+						post: withTier(post, snapshot.tiers, req.now),
+						reasons: explained.reasons,
+						improvements: explained.improvements,
+						vsAccount: {
+							// Against the typical (median) post, the same benchmark the reasons use.
+							viewsPercent: percentDiff(post.metrics.views, account.views.median),
+							likesPercent: percentDiff(post.metrics.likes, account.likes.median),
+							engagementRatePercent: percentDiff(post.engagementRate, account.engagementRate.median),
+							scorePoints: post.score === null ? null : post.score - 50,
+						},
+						isVideo: isVideoPost(snapshot, post),
+					};
+				})
+			: [];
+		ok(res, {
+			type,
+			sufficient,
+			minimumRequired: MIN_POSTS_FOR_RANKING,
+			total: sufficient ? ranked.length : 0,
+			items,
+			nextOffset: sufficient && offset + items.length < ranked.length ? offset + items.length : null,
+			/** The typical (median) post the comparisons above are measured against. */
+			typicalPost: { views: account.views.median, likes: account.likes.median, engagementRate: account.engagementRate.median },
+			scoreDefinition: SCORE_DEFINITION,
+			aiConfigured: isAiConfigured(),
+		});
+	});
+
+	/** GET /api/intelligence/trends?accountId=&tz= — patterns detected across the full history, and prioritized tasks. */
+	router.get('/trends', async (req, res) => {
+		const snapshot = await requireSnapshot(req, authOf(req).user.id, queryParam(req, 'accountId'));
+		const { recommendation, trends, tasks } = snapshotInsights(snapshot);
+		ok(res, { account: accountSummary(snapshot.account), ...trends, tasks, recommendation, aiConfigured: isAiConfigured() });
+	});
+
+	/** GET /api/intelligence/trends/ai — AI interpretation of the detected trends (cached per sync). */
+	router.get('/trends/ai', async (req, res) => {
+		const auth = authOf(req);
+		const snapshot = await requireSnapshot(req, auth.user.id, queryParam(req, 'accountId'));
+		const { trends } = snapshotInsights(snapshot);
+		if (!trends.sufficient || trends.trends.length === 0) {
+			throw new HttpError(422, 'INSUFFICIENT_DATA', `AI trends need clear patterns in at least ${trends.minimumRequired} synced posts.`);
+		}
+		ok(res, await getTrendInterpretation(auth.user.id, snapshot, trends, req.now));
 	});
 
 	/** GET /api/intelligence/ask?accountId= — recent questions and their answers. */

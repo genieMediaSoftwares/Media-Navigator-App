@@ -8,6 +8,7 @@ import {
   SocialPlatform,
   SyncSummary,
 } from '@/types/api';
+import { SyncStatusSummary } from '@/types/analysis';
 
 export async function fetchConnectedAccounts(): Promise<ConnectedAccount[]> {
   const { accounts } = await apiRequest<AccountsResponse>('/api/accounts', { auth: true });
@@ -45,9 +46,14 @@ export function disconnectAccount(id: string): Promise<{ message: string }> {
   return apiRequest<{ message: string }>(`/api/accounts/${id}`, { method: 'DELETE', auth: true });
 }
 
-/** Triggers data sync for a connected account. */
-export function syncAccount(id: string): Promise<SyncSummary> {
-  return apiRequest<SyncSummary>(`/api/accounts/${id}/sync`, { method: 'POST', auth: true });
+/** Triggers data sync for a connected account. Without a mode the server picks full or incremental. */
+export function syncAccount(id: string, mode?: 'full' | 'incremental'): Promise<SyncSummary> {
+  return apiRequest<SyncSummary>(`/api/accounts/${id}/sync${mode ? `?mode=${mode}` : ''}`, { method: 'POST', auth: true });
+}
+
+/** Last sync run, stored vs reported content counts and sync notes. */
+export function fetchSyncStatus(id: string): Promise<SyncStatusSummary> {
+  return apiRequest<SyncStatusSummary>(`/api/accounts/${id}/sync-status`, { auth: true });
 }
 
 /** Fetches full account dashboard data (profile metrics, synced media posts, sync status). */

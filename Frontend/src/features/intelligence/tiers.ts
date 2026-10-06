@@ -1,5 +1,5 @@
 import { formatCompactNumber, formatSignedPercent } from '@/lib/format';
-import { ContentFormat, ContentTier, FormatPerformance, IntelligencePost } from '@/types/api';
+import { ContentFormat, FormatPerformance, IntelligencePost } from '@/types/api';
 
 import { FORMAT_LABELS } from './labels';
 
@@ -32,13 +32,6 @@ export const TIER_COPY: Record<TierFilter, { label: string; title: string; subti
 
 /** Default order for each tier's list: best first for top/moderate, weakest first for low. */
 export const TIER_SORT = { top: 'interactions', moderate: 'interactions', low: 'lowest' } as const;
-
-export function ctaForTier(tier: ContentTier | null | undefined): string {
-  if (tier === 'top') return TIER_COPY.top.cta;
-  if (tier === 'low') return TIER_COPY.low.cta;
-  if (tier === 'moderate') return TIER_COPY.moderate.cta;
-  return 'See details';
-}
 
 /** "3.5× typical", "−85% vs typical" or "About typical", from the percent difference to the typical post. */
 export function formatVsTypical(percent: number | null | undefined): string | null {

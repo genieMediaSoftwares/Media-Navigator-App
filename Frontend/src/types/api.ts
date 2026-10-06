@@ -1,3 +1,5 @@
+import type { HeatmapMetric, MetricHeatmap, PostAnalysisBlock, PostingRecommendation, SyncStatusSummary } from './analysis';
+
 // Data contracts for Media Navigator API server responses (the `data` field of the envelope).
 // Type definitions only: every value the app renders must come from the API.
 // Dates are ISO 8601 strings. Scores are 0–100 unless noted. Nullable fields mean "not provided
@@ -74,6 +76,13 @@ export interface SyncSummary {
   postsSynced: number;
   metricsSynced: number;
   lastSyncedAt: string;
+  /** partial: what was fetched is saved, but the run stopped early (`message` says why). */
+  status?: 'completed' | 'partial';
+  mode?: 'full' | 'incremental';
+  /** Posts stored for the first time in this run. */
+  newPosts?: number;
+  profileMediaCount?: number | null;
+  message?: string | null;
 }
 
 export interface InstagramDashboardMetrics {
@@ -170,7 +179,8 @@ export interface HomeOverview {
 // Every number is computed by the server from synced Meta data. `null` means Instagram did not
 // provide the value: render "Not available", never 0.
 
-export type ContentFormat = 'REEL' | 'POST' | 'CAROUSEL' | 'VIDEO' | 'STORY';
+/** Content types in each platform's vocabulary (see the server's CONTENT_FORMATS). */
+export type ContentFormat = 'REEL' | 'POST' | 'CAROUSEL' | 'VIDEO' | 'STORY' | 'TEXT' | 'IMAGE' | 'LINK' | 'LIVE' | 'ARTICLE' | 'DOCUMENT' | 'POLL';
 
 export interface IntelligenceAccount {
   id: string;
@@ -311,7 +321,7 @@ export interface IntelligenceOverview {
     strongestWindow: TimingWindow | null;
   };
   lastSyncRun: {
-    status: 'running' | 'completed' | 'failed';
+    status: 'running' | 'completed' | 'partial' | 'failed';
     startedAt: string;
     completedAt: string | null;
     itemsFetched: number;
@@ -319,6 +329,7 @@ export interface IntelligenceOverview {
   } | null;
   aiConfigured: boolean;
   definitions: MetricDefinitions;
+  sync?: SyncStatusSummary;
 }
 
 export interface IntelligenceOverviewResponse {
@@ -408,6 +419,8 @@ export interface PostDetail {
   observedFactors: { label: string; value: string }[];
   aiConfigured: boolean;
   definitions: MetricDefinitions;
+  /** Performance score, measured reasons and comparisons; null when the post has no metrics. */
+  analysis?: PostAnalysisBlock | null;
 }
 
 export interface AiPostAnalysis {
@@ -488,6 +501,10 @@ export interface PlannerInsights {
   baseline?: { avgInteractions: number | null; typicalInteractions: number | null };
   /** Publishing/scheduling support, stated by the server. */
   scheduling?: { supported: boolean; reason: string };
+  /** Best day / time with confidence and measured reasons. */
+  recommendation?: PostingRecommendation;
+  /** Day × time heat maps per metric. */
+  heatmaps?: Partial<Record<HeatmapMetric, MetricHeatmap>>;
 }
 
 // ---- Notifications (GET /api/notifications) -----------------------------

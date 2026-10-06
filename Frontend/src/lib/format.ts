@@ -25,14 +25,6 @@ export function formatPercent(value: number | null, digits = 1): string {
   return `${trimZero(value.toFixed(digits))}%`;
 }
 
-export type ChangeDirection = 'up' | 'down' | 'flat';
-
-export function describeChange(percent: number): { text: string; direction: ChangeDirection } {
-  const direction: ChangeDirection = percent > 0 ? 'up' : percent < 0 ? 'down' : 'flat';
-  const sign = percent > 0 ? '+' : '';
-  return { text: `${sign}${trimZero(percent.toFixed(1))}%`, direction };
-}
-
 export function formatHour(hour: number): string {
   const normalized = hour % 24;
   const suffix = normalized < 12 ? 'am' : 'pm';

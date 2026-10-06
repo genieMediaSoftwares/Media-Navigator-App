@@ -7,13 +7,14 @@ import { BottomSheet } from '@/components/BottomSheet';
 import { EmptyState } from '@/components/EmptyState';
 import { ErrorState } from '@/components/ErrorState';
 import { colors } from '@/constants/colors';
-import { fetchMediaPage } from '@/features/intelligence/api';
+import { fetchIntelligenceOverview, fetchMediaPage } from '@/features/intelligence/api';
 import { RowsSkeleton } from '@/features/intelligence/components/IntelligenceSkeleton';
 import { MediaRow } from '@/features/intelligence/components/MediaRow';
 import { MediaTile, tileFromPost } from '@/features/intelligence/components/MediaTile';
-import { FORMAT_LABELS } from '@/features/intelligence/labels';
+import { formatLabel } from '@/features/intelligence/labels';
 import { TIER_COPY, TierFilter } from '@/features/intelligence/tiers';
 import { intelligenceSession } from '@/features/intelligence/session';
+import { useApiResource } from '@/hooks/useApiResource';
 import { ContentFormat, IntelligencePost, MediaPeriod, MediaSort } from '@/types/api';
 
 const PAGE_SIZE = 24;
@@ -102,9 +103,14 @@ export function ContentLibrary({ accountId, initialFormat = null, initialSort = 
   const [refreshing, setRefreshing] = useState(false);
   const requestId = useRef(0);
 
-  // Only formats that exist in this account's synced data are offered as filters.
-  const overview = intelligenceSession.overview(accountId);
-  const formatOptions: ContentFormat[] = overview ? overview.archive.formatCounts.map((f) => f.format) : ['REEL', 'POST', 'CAROUSEL', 'VIDEO'];
+  // Only formats that exist in this account's synced data are offered as filters, named in the
+  // platform's vocabulary. Opened without a cached overview (e.g. a deep link), the overview is fetched.
+  const cached = intelligenceSession.overview(accountId);
+  const overviewFetcher = useCallback(() => (cached ? Promise.resolve(null) : fetchIntelligenceOverview(accountId)), [cached, accountId]);
+  const fetched = useApiResource(overviewFetcher).state;
+  const overview = cached ?? (fetched.status === 'success' ? fetched.data?.overview ?? null : null);
+  const formatOptions: ContentFormat[] = overview ? overview.archive.formatCounts.map((f) => f.format) : [];
+  const platform = overview?.account.platform ?? null;
 
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput.trim()), 350);
@@ -212,8 +218,8 @@ export function ContentLibrary({ accountId, initialFormat = null, initialSort = 
               accessibilityState={{ selected }}
               className={`mr-sm min-h-11 flex-row items-center justify-center rounded-full px-lg ${selected ? 'bg-navy' : 'bg-neutral-100'}`}
             >
-              {option ? <View className="mr-xs h-2 w-2 rounded-full" style={{ backgroundColor: FORMAT_LABELS[option].color }} /> : null}
-              <Text className={`text-label ${selected ? 'font-semibold text-white' : 'text-navy'}`}>{option ? FORMAT_LABELS[option].plural : 'All'}</Text>
+              {option ? <View className="mr-xs h-2 w-2 rounded-full" style={{ backgroundColor: formatLabel(option, platform).color }} /> : null}
+              <Text className={`text-label ${selected ? 'font-semibold text-white' : 'text-navy'}`}>{option ? formatLabel(option, platform).plural : 'All'}</Text>
             </Pressable>
           );
         })}

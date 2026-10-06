@@ -1,234 +1,190 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import { Pressable, Text, useWindowDimensions, View } from 'react-native';
+import { useCallback, useState } from 'react';
+import { Pressable, Text, View } from 'react-native';
 
 import { ErrorState } from '@/components/ErrorState';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { Gradient } from '@/components/visual/Gradient';
-import { MetricStrip } from '@/components/visual/Metrics';
 import { FadeIn } from '@/components/visual/Motion';
-import { Overline, SectionTitle } from '@/components/visual/Typography';
 import { colors } from '@/constants/colors';
-import { elevation } from '@/constants/theme';
-import { fetchAiInsights, fetchIntelligenceOverview, fetchMediaPage } from '@/features/intelligence/api';
+import { accountHref, platformOption } from '@/features/accounts/platforms';
+import { fetchDashboard } from '@/features/analysis/api';
+import { PostingWindowCard } from '@/features/analysis/components/PostingWindowCard';
+import { LinkButton, MetricCell, num, pctOrNull, ScoreBadge, SectionLabel } from '@/features/analysis/components/Primitives';
+import { SyncBar } from '@/features/analysis/components/SyncBar';
+import { TaskList } from '@/features/analysis/components/TaskList';
+import { TrendChart } from '@/features/analysis/components/TrendChart';
 import { AccountHeader } from '@/features/intelligence/components/AccountHeader';
-import { EvidenceTag } from '@/features/intelligence/components/Evidence';
-import { MediaRail, tileFromPost } from '@/features/intelligence/components/MediaTile';
-import { FORMAT_LABELS } from '@/features/intelligence/labels';
+import { MediaThumb } from '@/features/intelligence/components/MediaThumb';
+import { formatLabel } from '@/features/intelligence/labels';
 import { intelligenceSession } from '@/features/intelligence/session';
-import { describeLeadingFormat, formatPlural, leadingFormat, typicalBadge } from '@/features/intelligence/tiers';
 import { useApiResource } from '@/hooks/useApiResource';
-import { formatCompactNumber, formatPercent } from '@/lib/format';
-import { HomeOverview, IntelligenceOverview, SocialPlatform } from '@/types/api';
+import { formatDate } from '@/lib/format';
+import { Dashboard, MetricTotal } from '@/types/analysis';
+import { HomeOverview } from '@/types/api';
 
 import { HeroSignalBanner } from './HeroSignalBanner';
 
-/** What each platform calls its audience. */
-const AUDIENCE: Record<SocialPlatform, string> = { instagram: 'Followers', facebook: 'Followers', youtube: 'Subscribers', linkedin: 'Followers' };
-const RECENT_WINDOW = 10;
-const NEW_POST_MS = 3 * 24 * 60 * 60 * 1000;
-
-function median(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+/** "1,240 of 1,300 posts" when a metric is missing for some posts, so totals are never overstated. */
+function coverage(metric: MetricTotal, total: number): string | undefined {
+  return metric.postsWithData > 0 && metric.postsWithData < total ? `${metric.postsWithData.toLocaleString()} of ${total.toLocaleString()} posts` : undefined;
 }
 
-/** The one thing worth knowing right now, measured from the account's formats. */
-function WhatsHappening({ overview, onOpen }: { overview: IntelligenceOverview; onOpen: (format: string) => void }) {
-  const lead = leadingFormat(overview.formats);
-  if (!lead) return null;
-  const { best } = lead;
-  const name = FORMAT_LABELS[best.format].plural;
+function DashboardSkeleton() {
   return (
-    <FadeIn index={1} className="mb-2xl">
-      <View style={elevation.float}>
-        <Gradient name="brand" style={{ borderRadius: 28, padding: 22 }}>
-          <Overline icon="pulse" color={colors.onDarkMuted}>
-            What’s happening
-          </Overline>
-          <Text className="mt-sm text-heading text-white">Your {name.toLowerCase()} get the most engagement.</Text>
-          <Text className="mt-sm text-label font-normal" style={{ color: colors.onDarkMuted }}>
-            {best.count} {formatPlural(best.format, best.count)} analyzed. {describeLeadingFormat(best, lead.next)}
-          </Text>
-          <Pressable onPress={() => onOpen(best.format)} accessibilityRole="button" className="mt-lg min-h-11 flex-row items-center self-start">
-            <Text className="text-label font-bold text-white">See why</Text>
-            <Ionicons name="arrow-forward" size={16} color={colors.white} style={{ marginLeft: 6 }} />
-          </Pressable>
-        </Gradient>
+    <View accessibilityRole="progressbar" accessibilityLabel="Loading dashboard">
+      <Skeleton className="mb-xl h-14 w-full rounded-xl" />
+      <View className="mb-xl flex-row flex-wrap">
+        {Array.from({ length: 8 }, (_, i) => (
+          <View key={i} className="mb-lg w-1/2 pr-md">
+            <Skeleton className="mb-xs h-3 w-20" />
+            <Skeleton className="h-6 w-24" />
+          </View>
+        ))}
       </View>
-    </FadeIn>
+      <Skeleton className="h-28 w-full rounded-xl" />
+    </View>
   );
 }
 
-/** Two or three of the account's strongest real posts. */
-function TopContent({ overview, onSeeAll }: { overview: IntelligenceOverview; onSeeAll: () => void }) {
-  const router = useRouter();
-  const { width } = useWindowDimensions();
-  const accountId = overview.account.id;
-  const fetcher = useCallback(
-    () => fetchMediaPage({ accountId, tier: 'top', sort: 'interactions', limit: 3 }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [accountId, overview.account.lastSyncedAt],
-  );
-  const { state } = useApiResource(fetcher);
-  if (!overview.tiers.sufficient) return null;
-  const posts = state.status === 'success' ? state.data.items : [];
-
+function BestPost({ dashboard, onOpen }: { dashboard: Dashboard; onOpen: (id: string) => void }) {
+  const best = dashboard.summary.bestPost;
+  if (!best) return null;
+  const format = formatLabel(best.format, dashboard.account.platform);
   return (
-    <FadeIn index={2} className="mb-2xl">
-      <SectionTitle title="Top content" description="Your strongest posts, measured against your typical post." action={{ label: 'All', onPress: onSeeAll }} />
-      {state.status === 'loading' ? (
-        <Skeleton className="h-72 w-full rounded-3xl" />
-      ) : posts.length === 0 ? (
-        <Text className="text-label font-normal text-neutral-500">No post has reached twice your typical interactions yet.</Text>
-      ) : (
-        <MediaRail
-          items={posts.map(tileFromPost)}
-          width={Math.min(width * 0.7, 300)}
-          aspect={1.2}
-          cta="Why did this work?"
-          badgeFor={(item) => {
-            const post = posts.find((p) => p.id === item.id);
-            return post ? typicalBadge(post) : null;
-          }}
-          onPress={(item) => router.push({ pathname: '/intelligence/post/[id]', params: { id: item.id, accountId, analyze: '1' } })}
-        />
-      )}
-    </FadeIn>
-  );
-}
-
-/** One AI recommendation, clearly labelled, with the way to all of them. */
-function WhatToDoNext({ overview, onOpen }: { overview: IntelligenceOverview; onOpen: () => void }) {
-  const accountId = overview.account.id;
-  const fetcher = useCallback(
-    async () => intelligenceSession.insights(accountId) ?? fetchAiInsights(accountId),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [accountId, overview.account.lastSyncedAt],
-  );
-  const { state } = useApiResource(fetcher);
-  useEffect(() => {
-    if (state.status === 'success') intelligenceSession.setInsights(accountId, state.data);
-  }, [state, accountId]);
-  if (!overview.aiConfigured || !overview.tiers.sufficient) return null;
-  if (state.status === 'loading') return <Skeleton className="mb-2xl h-32 w-full rounded-2xl" />;
-  if (state.status !== 'success') return null;
-  const insight = state.data.insights.find((i) => i.recommendation) ?? null;
-  if (!insight) return null;
-
-  return (
-    <FadeIn index={3} className="mb-2xl">
-      <SectionTitle title="What to do next" />
-      <View className="rounded-2xl bg-violet-light p-lg">
-        <EvidenceTag kind="aiSuggestion" />
-        <Text className="mt-sm text-body text-navy">{insight.recommendation}</Text>
-        <Pressable onPress={onOpen} accessibilityRole="button" className="mt-sm min-h-11 justify-center self-start">
-          <Text className="text-label font-semibold text-violet">View recommendations ›</Text>
-        </Pressable>
-      </View>
-    </FadeIn>
-  );
-}
-
-/** Latest 10 posts vs the 10 before them, by typical (median) interactions. */
-function RecentPerformance({ overview }: { overview: IntelligenceOverview }) {
-  const accountId = overview.account.id;
-  const fetcher = useCallback(
-    () => fetchMediaPage({ accountId, sort: 'recent', limit: RECENT_WINDOW * 2 }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [accountId, overview.account.lastSyncedAt],
-  );
-  const { state } = useApiResource(fetcher);
-  // Captured once: render must not read the clock.
-  const [now] = useState(() => Date.now());
-  if (state.status !== 'success') return null;
-  const items = state.data.items.filter((p) => p.interactions !== null);
-  if (items.length < RECENT_WINDOW * 2) return null;
-  const latest = items.slice(0, RECENT_WINDOW);
-  const latestTypical = median(latest.map((p) => p.interactions as number));
-  const previousTypical = median(items.slice(RECENT_WINDOW, RECENT_WINDOW * 2).map((p) => p.interactions as number));
-  const stillCollecting = latest.some((p) => p.publishedAt !== null && now - Date.parse(p.publishedAt) < NEW_POST_MS);
-  const up = latestTypical > previousTypical * 1.1;
-  const down = latestTypical < previousTypical * 0.9;
-
-  return (
-    <FadeIn index={4} className="mb-2xl">
-      <View className="mb-md flex-row flex-wrap items-center justify-between">
-        <Text className="mr-sm text-heading text-navy" accessibilityRole="header">
-          Recent performance
+    <Pressable
+      onPress={() => onOpen(best.id)}
+      accessibilityRole="button"
+      accessibilityLabel={`Best performing content: ${format.singular}${best.publishedAt ? ` from ${formatDate(best.publishedAt)}` : ''}, score ${best.score}`}
+      className="flex-row items-center rounded-xl border border-neutral-100 p-md active:bg-neutral-50"
+    >
+      <MediaThumb uri={best.previewUrl} format={best.format} size={72} rounded="lg" />
+      <View className="mx-md flex-1">
+        <Text className="text-caption text-neutral-500">
+          {format.singular}
+          {best.publishedAt ? ` · ${formatDate(best.publishedAt)}` : ''}
         </Text>
-        <EvidenceTag kind="observed" />
+        <Text className="mt-0.5 text-label text-navy" numberOfLines={2}>
+          {best.caption ?? 'No caption'}
+        </Text>
+        <Text className="mt-xs text-caption text-neutral-500">
+          {[best.metrics.views !== null ? `${num(best.metrics.views)} views` : null, best.metrics.likes !== null ? `${num(best.metrics.likes)} likes` : null, best.engagementRate !== null ? `${pctOrNull(best.engagementRate)} eng.` : null]
+            .filter(Boolean)
+            .join(' · ')}
+        </Text>
       </View>
-      <Text className="mb-md text-body text-navy">
-        {up
-          ? 'Your latest posts are getting more interactions than the ones before.'
-          : down
-            ? 'Your latest posts are getting fewer interactions than the ones before.'
-            : 'Your latest posts are performing about the same as the ones before.'}
-      </Text>
-      <MetricStrip
-        metrics={[
-          { label: `Typical · latest ${RECENT_WINDOW}`, value: formatCompactNumber(latestTypical), accent: up ? colors.success : down ? colors.warning : undefined },
-          { label: `Typical · previous ${RECENT_WINDOW}`, value: formatCompactNumber(previousTypical) },
-        ]}
-      />
-      {stillCollecting ? <Text className="mt-sm text-caption text-neutral-400">Posts from the last 3 days are still collecting interactions.</Text> : null}
-    </FadeIn>
+      <ScoreBadge score={best.score} size="sm" />
+    </Pressable>
   );
 }
 
-/** Home: what is happening with this account, in a few real numbers and one next step. */
+function DashboardBody({ dashboard, accounts, onSelectAccount, onReload }: { dashboard: Dashboard; accounts: Parameters<typeof AccountHeader>[0]['accounts']; onSelectAccount: (id: string) => void; onReload: () => void }) {
+  const router = useRouter();
+  const s = dashboard.summary;
+  const accountId = dashboard.account.id;
+  const platform = platformOption(dashboard.account.platform);
+  const openPost = (id: string) => router.push({ pathname: '/intelligence/post/[id]', params: { id, accountId } });
+  const openAnalysis = (section: 'top' | 'improve' | 'trends') => router.navigate({ pathname: '/intelligence', params: { accountId, section } });
+
+  return (
+    <View>
+      <AccountHeader account={dashboard.account} accounts={accounts} syncedPosts={s.totalPosts} onSelect={onSelectAccount} hideSyncTime />
+      <SyncBar
+        accountId={accountId}
+        platformName={platform.name}
+        sync={dashboard.sync}
+        onSynced={() => {
+          intelligenceSession.clearAccount(accountId);
+          onReload();
+        }}
+        onReconnect={() => router.push(accountHref(platform.id))}
+      />
+
+      {s.totalPosts === 0 ? null : (
+        <>
+          {/* 1. Overview */}
+          <FadeIn className="mb-xl">
+            <SectionLabel>Overview</SectionLabel>
+            <View className="flex-row flex-wrap">
+              <MetricCell label="Total posts" value={s.totalPosts.toLocaleString()} />
+              <MetricCell label="Total views" value={num(s.views.total)} hint={coverage(s.views, s.totalPosts)} />
+              <MetricCell label="Total likes" value={num(s.likes.total)} hint={coverage(s.likes, s.totalPosts)} />
+              <MetricCell label="Total comments" value={num(s.comments.total)} hint={coverage(s.comments, s.totalPosts)} />
+              <MetricCell label="Engagement rate" value={pctOrNull(s.engagementRate.average)} hint={s.engagementRate.average !== null ? 'avg per post · of followers' : undefined} />
+              <MetricCell label="Avg views / post" value={num(s.views.average)} hint={s.views.median !== null ? `typical ${num(s.views.median)}` : undefined} />
+              <MetricCell label="Avg likes / post" value={num(s.likes.average)} hint={s.likes.median !== null ? `typical ${num(s.likes.median)}` : undefined} />
+              <MetricCell label={platform.id === 'youtube' ? 'Subscribers' : 'Followers'} value={num(dashboard.followers)} />
+            </View>
+            <Text className="mb-sm text-caption font-semibold text-neutral-500">Best performing content</Text>
+            <BestPost dashboard={dashboard} onOpen={openPost} />
+          </FadeIn>
+
+          {/* 2. Insight → action */}
+          <FadeIn index={1} className="mb-2xl">
+            <SectionLabel right={<LinkButton label="All trends" onPress={() => openAnalysis('trends')} />}>What to do next</SectionLabel>
+            <TaskList tasks={dashboard.tasks} compact />
+          </FadeIn>
+
+          {/* 3. Visual analytics */}
+          <FadeIn index={2} className="mb-2xl">
+            <SectionLabel>Performance over time</SectionLabel>
+            <TrendChart points={dashboard.trend.points} granularity={dashboard.trend.granularity} />
+          </FadeIn>
+
+          <FadeIn index={3} className="mb-2xl">
+            <SectionLabel right={<LinkButton label="Heat maps" onPress={() => router.navigate({ pathname: '/planner', params: { accountId } })} />}>When to post</SectionLabel>
+            <PostingWindowCard recommendation={dashboard.recommendation} showWhy={false} />
+          </FadeIn>
+
+          <FadeIn index={4} className="mb-xl">
+            <SectionLabel>Explore</SectionLabel>
+            <View className="flex-row">
+              {(
+                [
+                  ['trophy-outline', 'Top performers', 'top'],
+                  ['construct-outline', 'Needs improvement', 'improve'],
+                  ['sparkles-outline', 'AI trends', 'trends'],
+                ] as const
+              ).map(([icon, label, section]) => (
+                <Pressable
+                  key={section}
+                  onPress={() => openAnalysis(section)}
+                  accessibilityRole="button"
+                  className="mr-sm flex-1 items-center rounded-xl bg-neutral-50 py-lg active:bg-neutral-100"
+                >
+                  <Ionicons name={icon} size={20} color={section === 'trends' ? colors.violet : colors.navy} />
+                  <Text className="mt-xs text-center text-caption font-semibold text-navy">{label}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </FadeIn>
+        </>
+      )}
+    </View>
+  );
+}
+
+/**
+ * Home dashboard: Overview → Insight → (detail lives in Analysis). Every number comes from
+ * GET /api/intelligence/dashboard, computed over all synced posts.
+ */
 export function HomeContent({ overview }: { overview: HomeOverview }) {
   const router = useRouter();
   const [accountId, setAccountId] = useState<string | null>(overview.channels[0]?.accountId ?? null);
-  const fetcher = useCallback(() => fetchIntelligenceOverview(accountId), [accountId]);
-  const intelligence = useApiResource(fetcher);
-  const data = intelligence.state.status === 'success' ? intelligence.state.data : null;
-  const intel = data?.overview ?? null;
-  const channel = overview.channels.find((c) => c.accountId === (intel?.account.id ?? accountId)) ?? overview.channels[0] ?? null;
-
-  useEffect(() => {
-    if (intel) intelligenceSession.setOverview(intel);
-  }, [intel]);
-
-  const openIntelligence = () =>
-    intel && intel.account.platform !== 'instagram' ? router.navigate({ pathname: '/intelligence', params: { accountId: intel.account.id } }) : router.navigate('/intelligence');
+  const fetcher = useCallback(() => fetchDashboard(accountId), [accountId]);
+  const { state, reload } = useApiResource(fetcher);
 
   return (
     <View>
       {overview.heroSignal ? <HeroSignalBanner signal={overview.heroSignal} /> : null}
-
-      {intelligence.state.status === 'loading' ? (
-        <View>
-          <Skeleton className="mb-xl h-12 w-2/3" />
-          <Skeleton className="mb-2xl h-14 w-full" />
-          <Skeleton className="h-44 w-full rounded-3xl" />
-        </View>
-      ) : !intel || !data ? (
-        <ErrorState message={intelligence.state.status === 'error' || intelligence.state.status === 'unavailable' ? intelligence.state.message : 'No account data yet.'} onRetry={intelligence.reload} />
+      {state.status === 'loading' ? (
+        <DashboardSkeleton />
+      ) : state.status !== 'success' ? (
+        <ErrorState message={state.message} onRetry={reload} />
+      ) : !state.data.dashboard ? (
+        <ErrorState message="No account data yet." onRetry={reload} />
       ) : (
-        <>
-          <FadeIn>
-            <AccountHeader account={intel.account} accounts={data.accounts} syncedPosts={intel.archive.syncedCount} onSelect={setAccountId} />
-            <View className="mb-2xl">
-              <MetricStrip
-                metrics={[
-                  { label: AUDIENCE[intel.account.platform], value: intel.summary.followers === null ? null : formatCompactNumber(intel.summary.followers) },
-                  { label: 'Posts analyzed', value: intel.archive.syncedCount.toLocaleString() },
-                  { label: 'Recent engagement', value: channel?.engagementRate == null ? null : formatPercent(channel.engagementRate, 2) },
-                ]}
-              />
-              <Text className="mt-sm text-center text-caption text-neutral-400">Recent engagement: your latest 50 posts.</Text>
-            </View>
-          </FadeIn>
-
-          <WhatsHappening overview={intel} onOpen={(format) => router.push({ pathname: '/intelligence/formats', params: { accountId: intel.account.id, format } })} />
-          <TopContent overview={intel} onSeeAll={openIntelligence} />
-          <WhatToDoNext overview={intel} onOpen={() => router.push({ pathname: '/intelligence/trends', params: { accountId: intel.account.id } })} />
-          <RecentPerformance overview={intel} />
-        </>
+        <DashboardBody dashboard={state.data.dashboard} accounts={state.data.accounts} onSelectAccount={setAccountId} onReload={reload} />
       )}
 
       <Pressable onPress={() => router.push('/connected-accounts')} accessibilityRole="button" className="min-h-11 flex-row items-center justify-center">

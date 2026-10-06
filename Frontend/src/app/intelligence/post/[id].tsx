@@ -7,22 +7,28 @@ import { ErrorState } from '@/components/ErrorState';
 import { Button } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Gradient } from '@/components/visual/Gradient';
-import { MetricStrip, PerformanceBar } from '@/components/visual/Metrics';
+import { PerformanceBar } from '@/components/visual/Metrics';
 import { FadeIn } from '@/components/visual/Motion';
+import { SegmentedControl } from '@/components/visual/SegmentedControl';
 import { Overline } from '@/components/visual/Typography';
 import { colors } from '@/constants/colors';
 import { platformOption } from '@/features/accounts/platforms';
+import { ComparisonView } from '@/features/analysis/components/ComparisonView';
+import { MetricCell, num, ScoreBadge } from '@/features/analysis/components/Primitives';
+import { ReasonsPanel } from '@/features/analysis/components/ReasonsPanel';
+import { VideoAnalysisView } from '@/features/analysis/components/VideoAnalysisView';
 import { fetchPostDetail } from '@/features/intelligence/api';
 import { EvidenceTag } from '@/features/intelligence/components/Evidence';
 import { MediaThumb } from '@/features/intelligence/components/MediaThumb';
 import { PostAnalysisSection } from '@/features/intelligence/components/PostAnalysisSection';
-import { FORMAT_LABELS } from '@/features/intelligence/labels';
+import { formatLabel } from '@/features/intelligence/labels';
 import { formatVsTypical, toneOf } from '@/features/intelligence/tiers';
 import { useApiResource } from '@/hooks/useApiResource';
 import { formatCompactNumber, formatDate, formatPercent, NOT_AVAILABLE } from '@/lib/format';
 import { PostDetail } from '@/types/api';
 
 type IconName = ComponentProps<typeof Ionicons>['name'];
+type DetailTab = 'overview' | 'compare' | 'analysis' | 'video';
 
 const FACT_ICONS: Record<string, IconName> = {
   Format: 'layers-outline',
@@ -61,18 +67,21 @@ function PostDetailContent({ detail, accountId, autoAnalyze }: { detail: PostDet
   const { width } = useWindowDimensions();
   const { post, comparison } = detail;
   const m = post.metrics;
-  const format = FORMAT_LABELS[post.format];
-  const heroHeight = Math.min(width * 1.15, 520);
-  const num = (value: number | null) => (value === null ? null : formatCompactNumber(value));
+  const format = formatLabel(post.format, detail.account.platform);
+  const heroHeight = Math.min(width * 1.0, 440);
   const typical = comparison.typicalInteractions ?? null;
   const barMax = Math.max(post.interactions ?? 0, typical ?? 0, comparison.formatAvgInteractions ?? 0);
   const vsTypical = formatVsTypical(comparison.vsTypicalPercent);
   const tone = toneOf(comparison.vsTypicalPercent);
-  const secondary = [
-    { label: 'Shares', value: num(m.shares) },
-    { label: 'Saves', value: num(m.saves) },
-    { label: 'Reach', value: num(m.reach) },
-  ].filter((metric) => metric.value !== null);
+  const analysis = detail.analysis ?? null;
+  const tabs: Array<{ value: DetailTab; label: string }> = [
+    { value: 'overview', label: 'Overview' },
+    { value: 'compare', label: 'Compare' },
+    { value: 'analysis', label: 'Analysis' },
+    ...(analysis?.isVideo ? [{ value: 'video' as const, label: 'Video' }] : []),
+  ];
+  // "Why did this work?" links open straight on the analysis.
+  const [tab, setTab] = useState<DetailTab>(autoAnalyze ? 'analysis' : 'overview');
   const platform = platformOption(detail.account.platform);
   const openInstagram = post.permalink ? () => void Linking.openURL(post.permalink as string) : undefined;
 
@@ -109,86 +118,111 @@ function PostDetailContent({ detail, accountId, autoAnalyze }: { detail: PostDet
       <View className="-mt-6 rounded-t-3xl bg-white px-xl pt-xl">
         <Caption text={post.caption} />
 
-        <FadeIn className="mt-xl">
-          <Overline icon="pulse" color={colors.primaryBright}>
-            Performance
-          </Overline>
-          <View className="mt-md">
-            <MetricStrip
-              metrics={[
-                { label: 'Views', value: num(m.views) },
-                { label: 'Likes', value: num(m.likes), accent: colors.magenta },
-                { label: 'Comments', value: num(m.comments) },
-              ]}
-            />
-          </View>
-          {secondary.length > 0 ? (
-            <View className="mt-lg">
-              <MetricStrip metrics={[...secondary, { label: 'Engagement', value: post.engagementRate === null ? null : formatPercent(post.engagementRate, 2) }]} />
-            </View>
-          ) : null}
-        </FadeIn>
+        <View className="my-xl">
+          <SegmentedControl segments={tabs} value={tab} onChange={setTab} />
+        </View>
 
-        <FadeIn index={1} className="mt-2xl">
-          <View className="mb-md flex-row flex-wrap items-center justify-between">
-            <Text className="mr-sm text-heading text-navy" accessibilityRole="header">
-              How this compares
-            </Text>
-            <EvidenceTag kind="observed" />
-          </View>
-          {post.interactions === null || typical === null ? (
-            <Text className="text-body text-neutral-500">Not enough data to compare this post.</Text>
-          ) : (
-            <>
-              {vsTypical ? (
-                <Text className={`mb-md text-display ${tone === 'positive' ? 'text-success' : tone === 'negative' ? 'text-warning' : 'text-navy'}`}>{vsTypical}</Text>
-              ) : null}
-              <PerformanceBar label="This post" value={formatCompactNumber(post.interactions)} ratio={barMax > 0 ? post.interactions / barMax : 0} color={colors.primaryBright} emphasis />
-              <PerformanceBar label="Your typical post" value={formatCompactNumber(typical)} ratio={barMax > 0 ? typical / barMax : 0} color={colors.neutral300} />
-              {comparison.formatAvgInteractions !== null ? (
-                <PerformanceBar
-                  label={`${format.plural} average · ${comparison.formatPostCount}`}
-                  value={formatCompactNumber(comparison.formatAvgInteractions)}
-                  ratio={barMax > 0 ? comparison.formatAvgInteractions / barMax : 0}
-                  color={format.color}
-                />
-              ) : null}
-              <Text className="text-caption text-neutral-400">Interactions = likes + comments. Typical post = the middle of your posts by interactions.</Text>
-            </>
-          )}
-        </FadeIn>
-
-        <FadeIn index={2} className="my-2xl">
-          <View className="mb-md flex-row flex-wrap items-center justify-between">
-            <Text className="mr-sm text-heading text-navy" accessibilityRole="header">
-              About this post
-            </Text>
-            <EvidenceTag kind="observed" />
-          </View>
-          {detail.observedFactors.map((fact) => (
-            <View key={fact.label} className="flex-row items-center py-sm" accessible accessibilityLabel={`${fact.label}: ${fact.value}`}>
-              <View className="h-9 w-9 items-center justify-center rounded-xl bg-success-light">
-                <Ionicons name={FACT_ICONS[fact.label] ?? 'ellipse-outline'} size={16} color={colors.success} />
+        {tab === 'overview' ? (
+          <FadeIn>
+            <View className="mb-lg flex-row items-center justify-between">
+              <View className="flex-1 pr-md">
+                <Overline icon="pulse" color={colors.primaryBright}>
+                  Performance overview
+                </Overline>
+                {analysis?.kind ? (
+                  <Text className="mt-xs text-label font-normal text-neutral-500">
+                    {analysis.kind === 'top' ? 'Scores at or above your typical post.' : 'Scores below your typical post.'}
+                  </Text>
+                ) : null}
               </View>
-              <Text className="ml-md text-label font-normal text-neutral-500">{fact.label}</Text>
-              <Text className="ml-md flex-1 text-right text-label font-semibold text-navy">{fact.value}</Text>
+              {analysis ? <ScoreBadge score={analysis.score} size="lg" /> : null}
             </View>
-          ))}
-        </FadeIn>
+            <View className="flex-row flex-wrap">
+              <MetricCell label="Views" value={num(m.views)} />
+              <MetricCell label="Likes" value={num(m.likes)} />
+              <MetricCell label="Comments" value={num(m.comments)} />
+              <MetricCell label="Shares" value={num(m.shares)} />
+              <MetricCell label="Saves" value={num(m.saves)} />
+              <MetricCell label="Engagement rate" value={post.engagementRate === null ? null : formatPercent(post.engagementRate, 2)} />
+              {m.reach !== null ? <MetricCell label="Reach" value={num(m.reach)} /> : null}
+              {analysis?.avgWatchTimeMs != null ? <MetricCell label="Avg watch time" value={`${(analysis.avgWatchTimeMs / 1000).toFixed(1)}s`} /> : null}
+            </View>
+            {vsTypical ? (
+              <Text className={`mb-lg text-label font-semibold ${tone === 'positive' ? 'text-success' : tone === 'negative' ? 'text-warning' : 'text-navy'}`}>Interactions: {vsTypical === 'About typical' ? 'about the same as' : vsTypical.replace(' typical', '')} your typical post</Text>
+            ) : null}
 
-        <PostAnalysisSection
-          accountId={accountId}
-          postId={post.id}
-          tier={detail.classification === 'insufficient' ? null : (post.tier ?? null)}
-          postFormat={post.format}
-          aiConfigured={detail.aiConfigured}
-          autoStart={autoAnalyze}
-        />
+            <View className="mb-md mt-sm flex-row flex-wrap items-center justify-between">
+              <Text className="mr-sm text-title text-navy" accessibilityRole="header">
+                About this post
+              </Text>
+              <EvidenceTag kind="observed" />
+            </View>
+            {detail.observedFactors.map((fact) => (
+              <View key={fact.label} className="flex-row items-center py-sm" accessible accessibilityLabel={`${fact.label}: ${fact.value}`}>
+                <View className="h-9 w-9 items-center justify-center rounded-xl bg-success-light">
+                  <Ionicons name={FACT_ICONS[fact.label] ?? 'ellipse-outline'} size={16} color={colors.success} />
+                </View>
+                <Text className="ml-md text-label font-normal text-neutral-500">{fact.label}</Text>
+                <Text className="ml-md flex-1 text-right text-label font-semibold text-navy">{fact.value}</Text>
+              </View>
+            ))}
+            {analysis ? <Text className="mt-lg text-caption text-neutral-400">{analysis.scoreDefinition}</Text> : null}
+          </FadeIn>
+        ) : null}
+
+        {tab === 'compare' ? (
+          <FadeIn>
+            {analysis ? (
+              <ComparisonView post={post} comparisons={analysis.comparisons} score={analysis.score} platform={detail.account.platform} />
+            ) : post.interactions === null || typical === null ? (
+              <Text className="text-body text-neutral-500">Not enough data to compare this post.</Text>
+            ) : (
+              <>
+                <PerformanceBar label="This post" value={formatCompactNumber(post.interactions)} ratio={barMax > 0 ? post.interactions / barMax : 0} color={colors.primaryBright} emphasis />
+                <PerformanceBar label="Your typical post" value={formatCompactNumber(typical)} ratio={barMax > 0 ? typical / barMax : 0} color={colors.neutral300} />
+              </>
+            )}
+          </FadeIn>
+        ) : null}
+
+        {tab === 'analysis' ? (
+          <FadeIn className="mb-xl">
+            {analysis?.kind ? (
+              <>
+                <Text className="mb-lg text-heading text-navy" accessibilityRole="header">
+                  {analysis.kind === 'top' ? 'Why it’s top' : 'Why it needs improvement'}
+                </Text>
+                <ReasonsPanel
+                  accountId={accountId}
+                  postId={post.id}
+                  kind={analysis.kind}
+                  reasons={analysis.reasons}
+                  improvements={analysis.improvements}
+                  aiConfigured={detail.aiConfigured}
+                  autoStartAi={autoAnalyze}
+                />
+              </>
+            ) : (
+              <PostAnalysisSection
+                accountId={accountId}
+                postId={post.id}
+                tier={detail.classification === 'insufficient' ? null : (post.tier ?? null)}
+                postFormat={post.format}
+                aiConfigured={detail.aiConfigured}
+                autoStart={autoAnalyze}
+              />
+            )}
+          </FadeIn>
+        ) : null}
+
+        {tab === 'video' ? (
+          <FadeIn className="mb-xl">
+            <VideoAnalysisView accountId={accountId} postId={post.id} />
+          </FadeIn>
+        ) : null}
 
         {openInstagram ? <Button title={`Open on ${platform.name}`} icon={platform.icon} variant="secondary" onPress={openInstagram} /> : null}
-        {post.metrics.views === null ? (
-          <Text className="mt-md text-center text-caption text-neutral-400">{NOT_AVAILABLE} means {platform.name} did not provide that metric for this post.</Text>
-        ) : null}
+        <Text className="mt-md text-center text-caption text-neutral-400">{NOT_AVAILABLE} means {platform.name} did not provide that metric for this post. It is never shown as zero.</Text>
       </View>
     </>
   );

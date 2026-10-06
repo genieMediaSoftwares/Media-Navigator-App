@@ -16,6 +16,17 @@ import {
 	TimingAnalysis,
 	toIntelligencePost,
 } from './intelligence';
+import {
+	AnalyticsContext,
+	buildAnalyticsContext,
+	buildPriorityTasks,
+	computePostingRecommendation,
+	DetectedTrends,
+	detectTrends,
+	needsImprovement,
+	PostingRecommendation,
+	PriorityTask,
+} from './analytics';
 
 /** Everything the intelligence endpoints and the AI context are computed from, for one account. */
 export interface IntelligenceSnapshot {
@@ -29,6 +40,9 @@ export interface IntelligenceSnapshot {
 		/** Latest account-level values from the platform insights API (period "day"), if any. */
 		reach: { value: number; period: string | null; date: string | null } | null;
 		impressions: { value: number; period: string | null; date: string | null } | null;
+		/** Account views / accounts engaged over the platform period (Instagram: last 28 days, metric_type=total_value). */
+		views: { value: number; period: string | null; date: string | null } | null;
+		accountsEngaged: { value: number; period: string | null; date: string | null } | null;
 	};
 	baseline: Baseline;
 	archive: ArchiveSummary;
@@ -36,6 +50,23 @@ export interface IntelligenceSnapshot {
 	ranking: { sufficient: boolean; working: IntelligencePost[]; attention: IntelligencePost[] };
 	timing: TimingAnalysis;
 	tiers: TierThresholds;
+	/** Every post with its performance score (see services/analytics.ts). */
+	analytics: AnalyticsContext;
+}
+
+const derived = new WeakMap<IntelligenceSnapshot, { recommendation: PostingRecommendation; trends: DetectedTrends; tasks: PriorityTask[] }>();
+
+/** Posting recommendation, detected trends and prioritized tasks, computed once per snapshot. */
+export function snapshotInsights(snapshot: IntelligenceSnapshot) {
+	let value = derived.get(snapshot);
+	if (!value) {
+		const recommendation = computePostingRecommendation(snapshot.analytics);
+		const trends = detectTrends(snapshot.analytics, recommendation);
+		const tasks = buildPriorityTasks(trends, needsImprovement(snapshot.analytics), recommendation, snapshot.analytics);
+		value = { recommendation, trends, tasks };
+		derived.set(snapshot, value);
+	}
+	return value;
 }
 
 /**
@@ -81,6 +112,8 @@ export async function loadIntelligenceSnapshot(account: ConnectedAccountRow, tim
 			mediaCount,
 			reach: latestInsight('reach'),
 			impressions: latestInsight('impressions'),
+			views: latestInsight('views'),
+			accountsEngaged: latestInsight('accounts_engaged'),
 		},
 		baseline,
 		archive: computeArchiveSummary(posts, mediaCount),
@@ -88,6 +121,7 @@ export async function loadIntelligenceSnapshot(account: ConnectedAccountRow, tim
 		ranking: rankPosts(posts, baseline.avgInteractions, now),
 		timing: computeTiming(posts, timeZone),
 		tiers: computeTierThresholds(baseline, posts, now),
+		analytics: buildAnalyticsContext(posts, rows, timeZone, now, account.platform),
 	};
 }
 

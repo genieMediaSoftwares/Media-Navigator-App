@@ -1,17 +1,21 @@
 import { getConfig } from '../config/env';
-import { ConnectedAccountRow, findAccountById, updateAccountStatusAndSynced } from '../db/accounts';
+import { ConnectedAccountRow, findAccountById, markFullSyncCompleted, updateAccountStatusAndSynced } from '../db/accounts';
 import {
 	ContentInput,
 	createSyncRun,
+	findKnownContentIds,
+	findReelsNeedingWatchMetrics,
 	getAccountInsights,
 	getContentByAccountId,
 	getLastSyncRun,
+	mergeExtraMetrics,
 	updateSyncRun,
 	upsertAccountInsight,
 	upsertContentItems,
 } from '../db/content';
 import { HttpError } from '../lib/http';
 import { redactSecrets } from '../lib/redact';
+import type { SyncMode } from '../models';
 import { getPlatformCredentials } from './credentials';
 import { getMetaApiVersion } from './instagram';
 import { classifyFormat, normalizeTimestamp } from './intelligence';
@@ -21,6 +25,14 @@ export interface SyncSummary {
 	postsSynced: number;
 	metricsSynced: number;
 	lastSyncedAt: string;
+	/** partial: what was fetched is stored, but the run stopped early (see `message`). Absent = completed. */
+	status?: 'completed' | 'partial';
+	mode?: SyncMode;
+	/** Posts stored for the first time in this run. */
+	newPosts?: number;
+	/** Content count the platform's profile reports (may exceed what its API returns). */
+	profileMediaCount?: number | null;
+	message?: string | null;
 }
 
 export interface InstagramDashboardResponse {
@@ -59,13 +71,15 @@ export interface InstagramDashboardResponse {
 		engagementRate: number | null;
 	}>;
 	lastSyncRun: {
-		status: 'running' | 'completed' | 'failed';
+		status: 'running' | 'completed' | 'partial' | 'failed';
 		startedAt: string;
 		completedAt: string | null;
 		itemsFetched: number;
 		errorMessage: string | null;
 	} | null;
 }
+
+const DAY_MS = 86_400_000;
 
 const MEDIA_FIELDS =
 	'id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count';
@@ -82,6 +96,19 @@ const MEDIA_INSIGHT_METRIC_SETS: readonly string[][] = [
 	['reach', 'saved', 'shares', 'total_interactions'],
 	['reach', 'saved'],
 ];
+
+/** Reels-only insights (milliseconds). Requested per Reel because feed media reject them. */
+const REEL_WATCH_METRICS = ['ig_reels_avg_watch_time', 'ig_reels_video_view_total_time'] as const;
+
+/** Account-level insights (metric_type=total_value). `impressions` was removed by Meta in April 2025. */
+const ACCOUNT_INSIGHT_METRICS = ['reach', 'views', 'accounts_engaged', 'total_interactions'] as const;
+const ACCOUNT_INSIGHT_DAYS = 28;
+
+/**
+ * Meta throttling codes (app, user, page and Instagram business-use-case limits). A throttled sync
+ * stops paging and keeps what it stored; the next run continues.
+ */
+const RATE_LIMIT_CODES = new Set([4, 17, 32, 613, 80001, 80002, 80003, 80004, 80005, 80006, 80008]);
 
 interface MediaInsightsField {
 	data?: Array<{ name?: string; values?: Array<{ value?: unknown }>; total_value?: { value?: unknown } }>;
@@ -104,28 +131,53 @@ interface MediaPageResponse {
 	paging?: { next?: string };
 }
 
+interface MetaFailure {
+	status: number;
+	code: number | null;
+	message: string;
+	rateLimited: boolean;
+}
+
+type PageResult = { ok: true; data: MediaPageResponse; tier: number } | { ok: false; error: MetaFailure };
+
+async function readFailure(res: Response): Promise<MetaFailure> {
+	let code: number | null = null;
+	let message = `Meta returned HTTP ${res.status}.`;
+	try {
+		const body = (await res.json()) as { error?: { code?: number; message?: string } };
+		code = typeof body.error?.code === 'number' ? body.error.code : null;
+		if (body.error?.message) message = redactSecrets(body.error.message).slice(0, 300);
+	} catch {
+		// non-JSON error body
+	}
+	return { status: res.status, code, message, rateLimited: res.status === 429 || (code !== null && RATE_LIMIT_CODES.has(code)) };
+}
+
 function mediaFieldsForTier(tier: number): string {
 	const metrics = MEDIA_INSIGHT_METRIC_SETS[tier];
 	return metrics ? `${MEDIA_FIELDS},insights.metric(${metrics.join(',')})` : MEDIA_FIELDS;
 }
 
 /**
- * Requests one media page starting at `startTier` and stepping down on failure. Returns the
- * tier that succeeded so later pages start there, or null if even the plain request failed.
+ * Requests one media page starting at `startTier` and stepping down when Meta rejects the requested
+ * insight metrics. Throttling stops immediately (stepping down would only spend more quota).
  */
-async function fetchMediaPage(url: string, startTier: number, fetchImpl: typeof fetch): Promise<{ data: MediaPageResponse; tier: number } | null> {
+async function fetchMediaPage(url: string, startTier: number, fetchImpl: typeof fetch): Promise<PageResult> {
+	let lastError: MetaFailure = { status: 0, code: null, message: 'No response from Meta.', rateLimited: false };
 	for (let tier = startTier; tier <= MEDIA_INSIGHT_METRIC_SETS.length; tier++) {
 		const pageUrl = new URL(url);
 		pageUrl.searchParams.set('fields', mediaFieldsForTier(tier));
 		const res = await fetchImpl(pageUrl.toString());
-		if (res.ok) return { data: (await res.json()) as MediaPageResponse, tier };
+		if (res.ok) return { ok: true, data: (await res.json()) as MediaPageResponse, tier };
+		lastError = await readFailure(res);
+		if (lastError.rateLimited) break;
 	}
-	return null;
+	return { ok: false, error: lastError };
 }
 
-async function fetchPlainPage(url: string, fetchImpl: typeof fetch): Promise<{ data: MediaPageResponse; tier: number } | null> {
+async function fetchPlainPage(url: string, fetchImpl: typeof fetch): Promise<PageResult> {
 	const res = await fetchImpl(url);
-	return res.ok ? { data: (await res.json()) as MediaPageResponse, tier: MEDIA_INSIGHT_METRIC_SETS.length } : null;
+	return res.ok ? { ok: true, data: (await res.json()) as MediaPageResponse, tier: MEDIA_INSIGHT_METRIC_SETS.length } : { ok: false, error: await readFailure(res) };
 }
 
 function metricNumber(value: unknown): number | null {
@@ -171,10 +223,92 @@ function toDate(iso: string | null): Date | null {
 	return iso ? new Date(iso) : null;
 }
 
+/** Full when no complete full sync happened within FULL_SYNC_INTERVAL_MS; incremental otherwise. */
+export function chooseSyncMode(account: Pick<ConnectedAccountRow, 'last_full_sync_at'>, now: number): SyncMode {
+	const last = account.last_full_sync_at;
+	return last === null || now - last >= getConfig().FULL_SYNC_INTERVAL_MS ? 'full' : 'incremental';
+}
+
+/** Account-level reach/views/engagement over the last 28 days. Unsupported metrics are simply not stored. */
+async function syncAccountInsights(
+	base: string,
+	account: ConnectedAccountRow,
+	accessToken: string,
+	now: number,
+	fetchImpl: typeof fetch,
+): Promise<number> {
+	const until = Math.floor(now / 1000);
+	const since = until - ACCOUNT_INSIGHT_DAYS * 86_400;
+	const metricDate = new Date(until * 1000).toISOString().slice(0, 10);
+	let stored = 0;
+	// One combined request first; if Meta rejects a metric for this account, each metric is retried alone.
+	const attempts: string[][] = [[...ACCOUNT_INSIGHT_METRICS], ...ACCOUNT_INSIGHT_METRICS.map((m) => [m])];
+	for (const metrics of attempts) {
+		const url = `${base}/${account.platform_account_id}/insights?metric=${metrics.join(',')}&metric_type=total_value&period=day&since=${since}&until=${until}&access_token=${encodeURIComponent(accessToken)}`;
+		const res = await fetchImpl(url);
+		if (!res.ok) {
+			if ((await readFailure(res)).rateLimited) return stored;
+			continue;
+		}
+		const body = (await res.json()) as { data?: Array<{ name?: string; total_value?: { value?: unknown } }> };
+		for (const item of body.data ?? []) {
+			const value = metricNumber(item.total_value?.value);
+			if (!item.name || value === null) continue;
+			await upsertAccountInsight(
+				account.id,
+				{ metricName: item.name, metricValue: value, period: `days_${ACCOUNT_INSIGHT_DAYS}`, metricDate, providerSource: 'insights_api' },
+				now,
+			);
+			stored++;
+		}
+		if (metrics.length > 1) return stored;
+	}
+	return stored;
+}
+
+/**
+ * Average and total watch time per Reel (one request per Reel). Bounded per sync; Reels that were
+ * never measured come first, then recent ones whose values still change.
+ */
+async function syncReelWatchMetrics(
+	base: string,
+	account: ConnectedAccountRow,
+	accessToken: string,
+	now: number,
+	fetchImpl: typeof fetch,
+): Promise<number> {
+	const config = getConfig();
+	if (config.REEL_WATCH_METRICS_PER_SYNC === 0) return 0;
+	const ids = await findReelsNeedingWatchMetrics(account.id, new Date(now - config.METRICS_REFRESH_DAYS * DAY_MS), config.REEL_WATCH_METRICS_PER_SYNC);
+	const updates: Array<{ platformContentId: string; values: Record<string, number | null> }> = [];
+	let throttled = false;
+	for (let i = 0; i < ids.length && !throttled; i += 5) {
+		const results = await Promise.all(
+			ids.slice(i, i + 5).map(async (id) => {
+				const res = await fetchImpl(`${base}/${id}/insights?metric=${REEL_WATCH_METRICS.join(',')}&access_token=${encodeURIComponent(accessToken)}`);
+				if (!res.ok) {
+					if ((await readFailure(res)).rateLimited) throttled = true;
+					return null;
+				}
+				const body = (await res.json()) as MediaInsightsField;
+				const value = (name: string) => {
+					const metric = body.data?.find((m) => m.name === name);
+					return metricNumber(metric?.values?.[0]?.value ?? metric?.total_value?.value);
+				};
+				return { platformContentId: id, values: { avgWatchTimeMs: value('ig_reels_avg_watch_time'), totalWatchTimeMs: value('ig_reels_video_view_total_time') } };
+			}),
+		);
+		for (const result of results) if (result) updates.push(result);
+	}
+	await mergeExtraMetrics(account.id, updates);
+	return updates.filter((u) => u.values.avgWatchTimeMs !== null || u.values.totalWatchTimeMs !== null).length;
+}
+
 export async function syncInstagramAccount(
 	account: ConnectedAccountRow,
 	now = Date.now(),
 	fetchImpl: typeof fetch = fetch,
+	options: { mode?: SyncMode } = {},
 ): Promise<SyncSummary> {
 	const config = getConfig();
 	const accountId = account.id;
@@ -189,10 +323,14 @@ export async function syncInstagramAccount(
 
 	const accessToken = credentials.accessToken;
 	const version = getMetaApiVersion();
-	const syncRunId = await createSyncRun(accountId, now);
+	const mode = options.mode ?? chooseSyncMode(account, now);
+	const syncRunId = await createSyncRun(accountId, now, mode);
 
 	let postsSynced = 0;
+	let newPosts = 0;
 	let metricsSynced = 0;
+	let pageCount = 0;
+	let profileMediaCount: number | null = null;
 
 	try {
 		// 2. Profile fields
@@ -228,6 +366,7 @@ export async function syncInstagramAccount(
 			throw new HttpError(400, 'META_API_ERROR', msg);
 		}
 
+		profileMediaCount = typeof profileData.media_count === 'number' ? profileData.media_count : null;
 		for (const [metricName, value] of [
 			['followers_count', profileData.followers_count],
 			['follows_count', profileData.follows_count],
@@ -245,50 +384,26 @@ export async function syncInstagramAccount(
 			profilePictureUrl: profileData.profile_picture_url ?? account.profile_picture_url,
 		});
 
-		// 3. Account-level insights where supported (impressions, reach)
-		try {
-			const insightsUrl = `${config.META_GRAPH_BASE_URL}/${version}/${account.platform_account_id}/insights?metric=impressions,reach&period=day&access_token=${encodeURIComponent(accessToken)}`;
-			const insightsRes = await fetchImpl(insightsUrl);
-			if (insightsRes.ok) {
-				const insightsData = (await insightsRes.json()) as {
-					data?: Array<{ name: string; period: string; values: Array<{ value: number; end_time?: string }> }>;
-				};
-				for (const item of insightsData.data ?? []) {
-					const lastVal = item.values[item.values.length - 1];
-					if (lastVal && typeof lastVal.value === 'number') {
-						await upsertAccountInsight(
-							accountId,
-							{
-								metricName: item.name,
-								metricValue: lastVal.value,
-								period: item.period,
-								metricDate: lastVal.end_time ?? 'latest',
-								providerSource: 'insights_api',
-							},
-							now,
-						);
-						metricsSynced++;
-					}
-				}
-			}
-		} catch {
-			// Account-level insights may be forbidden or unsupported for this account type.
-		}
-
-		// 4. Media with cursor pagination. Per-media insights are requested inline through field
+		// 3. Media with cursor pagination. Per-media insights are requested inline through field
 		// expansion (no extra request per post); see fetchMediaPage for the fallback chain.
+		// Full mode walks every page. Incremental mode stops at the first page that holds only posts
+		// that are already stored and older than the metrics refresh window.
 		let nextUrl: string | null = `${config.META_GRAPH_BASE_URL}/${version}/${account.platform_account_id}/media?limit=${config.MEDIA_PAGE_SIZE}&access_token=${encodeURIComponent(accessToken)}`;
-		let pageCount = 0;
 		let insightTier = 0;
 		let usingFallbackApi = false;
+		let reachedEnd = false;
+		let stop: { code: string; message: string; rateLimited: boolean } | null = null;
+		const refreshSince = now - config.METRICS_REFRESH_DAYS * DAY_MS;
 
-		while (nextUrl && pageCount < config.MAX_MEDIA_PAGES) {
+		while (nextUrl) {
+			if (pageCount >= config.MAX_MEDIA_PAGES) {
+				stop = { code: 'PAGE_LIMIT', message: `Stopped after ${pageCount} pages (MAX_MEDIA_PAGES). Older posts were not synced in this run.`, rateLimited: false };
+				break;
+			}
 			pageCount++;
-			let page: { data: MediaPageResponse; tier: number } | null = usingFallbackApi
-				? await fetchPlainPage(nextUrl, fetchImpl)
-				: await fetchMediaPage(nextUrl, insightTier, fetchImpl);
+			let page: PageResult = usingFallbackApi ? await fetchPlainPage(nextUrl, fetchImpl) : await fetchMediaPage(nextUrl, insightTier, fetchImpl);
 
-			if (!page && pageCount === 1) {
+			if (!page.ok && pageCount === 1 && !page.error.rateLimited) {
 				// Instagram Login API (graph.instagram.com); its paging URLs are followed as-is.
 				usingFallbackApi = true;
 				page = await fetchPlainPage(
@@ -297,22 +412,67 @@ export async function syncInstagramAccount(
 				);
 			}
 
-			if (!page) break;
+			if (!page.ok) {
+				stop = page.error.rateLimited
+					? { code: 'RATE_LIMITED', message: 'Instagram rate limit reached. Posts fetched so far are saved; the rest will sync on the next run.', rateLimited: true }
+					: { code: 'MEDIA_PAGE_FAILED', message: `Instagram stopped returning media after ${postsSynced} posts: ${page.error.message}`, rateLimited: false };
+				break;
+			}
 			insightTier = page.tier;
-			const mediaData: MediaPageResponse = page.data;
-			if (!Array.isArray(mediaData.data) || mediaData.data.length === 0) break;
+			const items = Array.isArray(page.data.data) ? page.data.data : [];
+			if (items.length === 0) {
+				reachedEnd = true;
+				break;
+			}
 
-			await upsertContentItems(userId, accountId, 'instagram', mediaData.data.map(toContentInput), now);
-			postsSynced += mediaData.data.length;
-			nextUrl = mediaData.paging?.next ?? null;
+			const known = mode === 'incremental' ? await findKnownContentIds(accountId, items.map((i) => i.id)) : null;
+			const inputs = items.map(toContentInput);
+			const written = await upsertContentItems(userId, accountId, 'instagram', inputs, now);
+			postsSynced += items.length;
+			newPosts += written.inserted;
+			nextUrl = page.data.paging?.next ?? null;
+			if (!nextUrl) reachedEnd = true;
+
+			if (known && inputs.every((i) => known.has(i.platformContentId) && i.publishedAt !== null && i.publishedAt !== undefined && i.publishedAt.getTime() < refreshSince)) {
+				break;
+			}
 		}
 
-		await updateSyncRun(syncRunId, 'completed', postsSynced, now);
-		return { accountId, postsSynced, metricsSynced, lastSyncedAt: new Date(now).toISOString() };
+		// 4. Reels watch time and account-level insights; both optional and never fatal.
+		const base = `${usingFallbackApi ? config.INSTAGRAM_GRAPH_BASE_URL : config.META_GRAPH_BASE_URL}/${version}`;
+		if (!stop?.rateLimited) {
+			try {
+				metricsSynced += await syncReelWatchMetrics(base, account, accessToken, now, fetchImpl);
+				metricsSynced += await syncAccountInsights(base, account, accessToken, now, fetchImpl);
+			} catch {
+				// Insights may be forbidden or unsupported for this account type.
+			}
+		}
+
+		const status = stop ? 'partial' : 'completed';
+		await updateSyncRun(syncRunId, status, postsSynced, now, stop ? { code: stop.code, message: stop.message } : undefined, {
+			pagesFetched: pageCount,
+			newItems: newPosts,
+			reachedEnd,
+			profileMediaCount,
+		});
+		if (mode === 'full' && status === 'completed' && reachedEnd) await markFullSyncCompleted(accountId, now);
+
+		return {
+			accountId,
+			postsSynced,
+			metricsSynced,
+			lastSyncedAt: new Date(now).toISOString(),
+			status,
+			mode,
+			newPosts,
+			profileMediaCount,
+			message: stop?.message ?? null,
+		};
 	} catch (err) {
 		if (err instanceof HttpError) throw err;
 		const msg = redactSecrets(err instanceof Error ? err.message : 'Instagram sync failed due to network or server error.');
-		await updateSyncRun(syncRunId, 'failed', postsSynced, now, { code: 'SYNC_ERROR', message: msg });
+		await updateSyncRun(syncRunId, 'failed', postsSynced, now, { code: 'SYNC_ERROR', message: msg }, { pagesFetched: pageCount, newItems: newPosts });
 		throw new HttpError(500, 'SYNC_FAILED', 'Instagram sync failed due to a network or server error. Please try again.');
 	}
 }

@@ -12,16 +12,16 @@ import { fetchAiInsights, fetchMediaPage } from '@/features/intelligence/api';
 import { FormatMix } from '@/features/intelligence/components/FormatComparison';
 import { MediaRow } from '@/features/intelligence/components/MediaRow';
 import { TrendBlock } from '@/features/intelligence/components/TrendBlock';
-import { FORMAT_LABELS } from '@/features/intelligence/labels';
+import { formatLabel } from '@/features/intelligence/labels';
 import { intelligenceSession } from '@/features/intelligence/session';
 import { describeLeadingFormat, formatPlural, leadingFormat, TIER_COPY, TIER_SORT, TierFilter, typicalBadge } from '@/features/intelligence/tiers';
 import { useIntelligenceOverview } from '@/features/intelligence/useIntelligenceOverview';
 import { useApiResource } from '@/hooks/useApiResource';
 import { formatCompactNumber, formatPercent } from '@/lib/format';
-import { ContentFormat, FormatPerformance, IntelligenceOverview } from '@/types/api';
+import { ContentFormat, FormatPerformance, IntelligenceOverview, SocialPlatform } from '@/types/api';
 
 /** One real example of this format in a tier, or a plain note that there is none. */
-function TierExample({ accountId, format, tier, version }: { accountId: string; format: ContentFormat; tier: TierFilter; version: string | null }) {
+function TierExample({ accountId, format, tier, version, platform }: { accountId: string; format: ContentFormat; tier: TierFilter; version: string | null; platform: SocialPlatform }) {
   const router = useRouter();
   const fetcher = useCallback(
     () => fetchMediaPage({ accountId, format, tier, sort: TIER_SORT[tier], limit: 1 }),
@@ -33,7 +33,7 @@ function TierExample({ accountId, format, tier, version }: { accountId: string; 
   return (
     <View className="mb-lg">
       <Text className="text-overline uppercase tracking-widest text-neutral-500">
-        {TIER_COPY[tier].label} {FORMAT_LABELS[format].singular.toLowerCase()}
+        {TIER_COPY[tier].label} {formatLabel(format, platform).singular.toLowerCase()}
       </Text>
       {state.status === 'loading' ? (
         <Skeleton className="mt-sm h-20 w-full rounded-xl" />
@@ -53,7 +53,7 @@ function TierExample({ accountId, format, tier, version }: { accountId: string; 
 
 /** "What we learned": measured comparison first, then any AI insight that cites this format. */
 function Learned({ overview, selected }: { overview: IntelligenceOverview; selected: FormatPerformance }) {
-  const name = FORMAT_LABELS[selected.format].plural;
+  const name = formatLabel(selected.format, overview.account.platform).plural;
   const lead = leadingFormat(overview.formats);
   let observed: string;
   if (selected.count < 3) {
@@ -61,7 +61,7 @@ function Learned({ overview, selected }: { overview: IntelligenceOverview; selec
   } else if (lead && lead.best.format === selected.format) {
     observed = describeLeadingFormat(lead.best, lead.next);
   } else if (lead) {
-    observed = `${name} average ${formatCompactNumber(selected.avgInteractions)} interactions. ${FORMAT_LABELS[lead.best.format].plural} lead with ${formatCompactNumber(lead.best.avgInteractions)}.`;
+    observed = `${name} average ${formatCompactNumber(selected.avgInteractions)} interactions. ${formatLabel(lead.best.format, overview.account.platform).plural} lead with ${formatCompactNumber(lead.best.avgInteractions)}.`;
   } else {
     observed = `${name} average ${formatCompactNumber(selected.avgInteractions)} interactions per post.`;
   }
@@ -113,7 +113,7 @@ function FormatsContent({ overview, initialFormat }: { overview: IntelligenceOve
       </View>
     );
   }
-  const label = FORMAT_LABELS[selected.format];
+  const label = formatLabel(selected.format, overview.account.platform);
 
   return (
     <ScrollView className="flex-1 bg-white" contentContainerClassName="px-xl pb-3xl pt-md">
@@ -134,8 +134,8 @@ function FormatsContent({ overview, initialFormat }: { overview: IntelligenceOve
               accessibilityState={{ selected: isSelected }}
               className={`mr-sm min-h-11 flex-row items-center justify-center rounded-full px-lg ${isSelected ? 'bg-navy' : 'bg-neutral-100'}`}
             >
-              <View className="mr-xs h-2 w-2 rounded-full" style={{ backgroundColor: FORMAT_LABELS[f.format].color }} />
-              <Text className={`text-label ${isSelected ? 'font-semibold text-white' : 'text-navy'}`}>{FORMAT_LABELS[f.format].plural}</Text>
+              <View className="mr-xs h-2 w-2 rounded-full" style={{ backgroundColor: formatLabel(f.format, overview.account.platform).color }} />
+              <Text className={`text-label ${isSelected ? 'font-semibold text-white' : 'text-navy'}`}>{formatLabel(f.format, overview.account.platform).plural}</Text>
             </Pressable>
           );
         })}
@@ -162,7 +162,7 @@ function FormatsContent({ overview, initialFormat }: { overview: IntelligenceOve
           <View className="mt-sm">
             <Text className="mb-md text-title text-navy">Examples from your {label.plural.toLowerCase()}</Text>
             {(['top', 'moderate', 'low'] as const).map((tier) => (
-              <TierExample key={tier} accountId={accountId} format={selected.format} tier={tier} version={overview.account.lastSyncedAt} />
+              <TierExample key={tier} accountId={accountId} format={selected.format} tier={tier} version={overview.account.lastSyncedAt} platform={overview.account.platform} />
             ))}
           </View>
         ) : null}
